@@ -99,6 +99,86 @@ V2_POLICIES = {
     ],
 }
 
+# ─── Voice Agent policies (speed-first) ──────────────────────────────────────
+# Used when Rachel (the voice agent) calls /v1/chat/completions. Optimized for
+# LATENCY: fast tool-capable models first, strong/slow models only when explicitly
+# needed. No v1/v2/v3 mode layer (ensemble is too slow for voice).
+
+VOICE_POLICIES = {
+    "tools": [
+        "llama-3.3-70b",        # fast + tool-capable
+        "gpt-oss-20b",           # fast + tool-capable fallback
+        "gpt-4.1",               # mid + tool-capable
+        "mistral-large-3-675b",  # slow but strong — last resort for tools
+    ],
+    "fast": [
+        "gpt-oss-20b",
+        "llama-3.3-70b",
+        "gpt-4.1",
+    ],
+    "reasoning": [
+        "mistral-large-3-675b",  # smart, slower — only when explicitly needed
+        "gpt-4.1",
+        "llama-3.3-70b",
+    ],
+    "long-context": [
+        "nemotron-3-super-120b",  # 1M ctx
+        "mistral-large-3-675b",
+        "gpt-4.1",
+    ],
+    "summarization": [
+        "gpt-4.1",
+        "mistral-large-3-675b",
+        "llama-3.3-70b",
+    ],
+}
+
+
+def classify_voice_policy(request: dict[str, Any]) -> str:
+    """Speed-first classification for voice traffic (Rachel)."""
+    tokens = estimate_tokens(request)
+    text = extract_text_from_anthropic_messages(request.get("messages", [])).lower()
+    has_tools = bool(request.get("tools") or request.get("tool_choice"))
+    if tokens > 60000:
+        return "long-context"
+    if has_any_word(text, [
+        "analyze", "analyse", "strategy", "architect", "compare", "tradeoff",
+        "pros and cons", "synthesize", "reason", "prove", "derive",
+        "design pattern", "optimization", "algorithm", "complexity",
+    ]):
+        return "reasoning"
+    if has_any_word(text, ["summarize", "summary", "tl;dr", "overview"]):
+        return "summarization"
+    if has_tools:
+        return "tools"
+    return "fast"
+
+
+def voice_ordered_candidates(request: dict[str, Any], capabilities: list[ModelCapability]) -> list[ModelCapability]:
+    """Return models in speed-first preference order for the voice policy."""
+    needs_tools = bool(request.get("tools") or request.get("tool_choice"))
+    tokens = estimate_tokens(request)
+    eligible = [
+        cap for cap in capabilities
+        if cap.claude_code_compatible
+        and cap.context_window >= tokens
+        and (not needs_tools or cap.supports_tools)
+    ]
+    by_name = {cap.model: cap for cap in eligible}
+    policy = classify_voice_policy(request)
+    ordered: list[ModelCapability] = []
+    seen: set[str] = set()
+    for name in VOICE_POLICIES.get(policy, []):
+        cap = by_name.get(name)
+        if cap and cap.model not in seen:
+            ordered.append(cap)
+            seen.add(cap.model)
+    for cap in eligible:
+        if cap.model not in seen:
+            ordered.append(cap)
+            seen.add(cap.model)
+    return ordered
+
 
 @dataclasses.dataclass
 class ModelCapability:
@@ -787,6 +867,78 @@ def race_models_for_first_success(
     raise RuntimeError("All compatible fallback models failed: " + " | ".join(failures))
 
 
+def race_voice_openai(
+    openai_request: dict[str, Any],
+    candidates: list[ModelCapability],
+    api_base: str,
+    api_token: str | None,
+) -> tuple[dict[str, Any], str, str]:
+    """Speed-first race for OpenAI-format requests (Rachel / voice agent).
+
+    Takes an already-OpenAI payload, swaps the model per candidate, and races.
+    Returns (response, selected_model, fallback_notes). No Anthropic translation —
+    the voice agent speaks OpenAI natively, so we pass the response straight back.
+    """
+    if not candidates:
+        raise RuntimeError("No compatible models available for this voice request.")
+    failures: list[str] = []
+    # Strip the client's model choice + stream flag so we control routing.
+    base_payload = {k: v for k, v in openai_request.items() if k not in ("model", "stream")}
+    base_payload["stream"] = False
+
+    # Step 1: preferred (fastest) model, alone, tight timeout.
+    preferred = candidates[0]
+    payload = dict(base_payload)
+    payload["model"] = preferred.model
+    cand, response, err_kind = _attempt_one_model(preferred, payload, api_base, api_token, timeout=8.0)
+    if response is not None:
+        return response, preferred.model, ""
+    failures.append(f"{preferred.model}: {err_kind}")
+
+    # Step 2: race remaining in parallel.
+    rest = candidates[1:]
+
+    def run_pass(alive: list[ModelCapability]):
+        local_failures: list[str] = []
+        if len(alive) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(alive))) as ex:
+                futures = {}
+                for c in alive:
+                    p = dict(base_payload)
+                    p["model"] = c.model
+                    futures[ex.submit(_attempt_one_model, c, p, api_base, api_token)] = c
+                for fut in concurrent.futures.as_completed(futures):
+                    cand, response, err_kind = fut.result()
+                    if response is not None:
+                        return response, cand, local_failures
+                    local_failures.append(f"{cand.model}: {err_kind}")
+        else:
+            for c in alive:
+                p = dict(base_payload)
+                p["model"] = c.model
+                cand, response, err_kind = _attempt_one_model(c, p, api_base, api_token)
+                if response is not None:
+                    return response, cand, local_failures
+                local_failures.append(f"{cand.model}: {err_kind}")
+        return None
+
+    if rest:
+        result = run_pass(rest)
+        if result is not None:
+            response, winner, local_failures = result
+            failures.extend(local_failures)
+            return response, winner.model, "; ".join(failures)
+        if all("rate_limit" in f for f in failures):
+            time.sleep(2.0)
+            result = run_pass(rest)
+            if result is not None:
+                response, winner, local_failures = result
+                failures.extend(local_failures)
+                return response, winner.model, "; ".join(failures)
+
+    raise RuntimeError("All compatible models failed: " + " | ".join(failures))
+
+
 def post_with_model_fallback(
                 request: dict[str, Any],
                 capabilities: list[ModelCapability],
@@ -1100,7 +1252,7 @@ def get_dashboard_html() -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FreeLLM Claude Router Control Panel</title>
+    <title>FreeLLM Unified Router Control Panel</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -1422,6 +1574,7 @@ def get_dashboard_html() -> str:
                     <thead>
                         <tr>
                             <th>Timestamp</th>
+                            <th>Agent</th>
                             <th>Mode</th>
                             <th>Matched Policy</th>
                             <th>Target Model</th>
@@ -1431,7 +1584,7 @@ def get_dashboard_html() -> str:
                     </thead>
                     <tbody id="decisions-body">
                         <tr>
-                            <td colspan="6" class="no-data">Loading decisions...</td>
+                            <td colspan="7" class="no-data">Loading decisions...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -1499,7 +1652,7 @@ def get_dashboard_html() -> str:
         function renderDecisions(decisions) {
             const body = document.getElementById('decisions-body');
             if (!decisions || decisions.length === 0) {
-                body.innerHTML = '<tr><td colspan="6" class="no-data">No routing decisions logged yet.</td></tr>';
+                body.innerHTML = '<tr><td colspan="7" class="no-data">No routing decisions logged yet.</td></tr>';
                 return;
             }
 
@@ -1520,6 +1673,10 @@ def get_dashboard_html() -> str:
                 const tr = document.createElement('tr');
                 
                 const time = dec.timestamp ? new Date(dec.timestamp).toLocaleTimeString() : 'N/A';
+                const agent = dec.agent || 'claude';
+                const agentBadge = agent === 'voice'
+                    ? '<span class="badge" style="background:rgba(236,72,153,0.15);color:#ec4899;">🎙️ Voice</span>'
+                    : '<span class="badge badge-info">🤖 Claude</span>';
                 const mode = dec.mode || 'v1';
                 const policy = dec.policy || 'none';
                 const model = dec.selected_model || 'N/A';
@@ -1534,6 +1691,7 @@ def get_dashboard_html() -> str:
 
                 tr.innerHTML = `
                     <td>${time}</td>
+                    <td>${agentBadge}</td>
                     <td><span class="badge badge-info">${mode}</span></td>
                     <td><code>${policy}</code></td>
                     <td><span style="font-weight:600;">${model}</span></td>
@@ -1771,7 +1929,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
             capabilities = []
             try:
                 capabilities = [
-                    {"model": cap.model, "claudeCodeCompatible": cap.claude_code_compatible}
+                    {"model": cap.model, "claudeCodeCompatible": cap.claude_code_compatible, "supportsTools": cap.supports_tools, "contextWindow": cap.context_window, "roles": cap.roles}
                     for cap in load_allowlist(self.allowlist_path)
                 ]
             except:
@@ -1828,6 +1986,13 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
             request = read_json_body(self)
             write_json(self, 200, {"input_tokens": estimate_tokens(request)})
             return
+        # ── OpenAI-format endpoint for the voice agent (Rachel) ────────────
+        # Rachel calls /v1/chat/completions (OpenAI), not /v1/messages (Anthropic).
+        # We auto-detect her by endpoint and apply speed-first routing (no v1/v2/v3
+        # ensemble — too slow for voice). Storm-hardened parallel fallback still applies.
+        if path in ("/v1/chat/completions", "/v1/chat/completions/"):
+            self._handle_voice_openai()
+            return
         if path != "/v1/messages":
             write_json(self, 404, {"error": "not found"})
             return
@@ -1857,7 +2022,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
                 
                 # Log success
                 log_decision({
-                    "mode": self.mode,
+                    "agent": "claude", "mode": self.mode,
                     "effective_mode": effective_mode,
                     "route_reason": route_reason,
                     "policy": f"ensemble:{policy}",
@@ -1899,7 +2064,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
                 )
                 latency_ms = int((time.time() - start_time) * 1000)
                 log_decision({
-                    "mode": self.mode,
+                    "agent": "claude", "mode": self.mode,
                     "effective_mode": effective_mode,
                     "route_reason": route_reason,
                     "policy": policy,
@@ -1924,7 +2089,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
 
             # Log success
             log_decision({
-                "mode": self.mode,
+                "agent": "claude", "mode": self.mode,
                 "effective_mode": effective_mode,
                 "route_reason": route_reason,
                 "policy": policy,
@@ -1959,7 +2124,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
             
             # Log error
             log_decision({
-                "mode": self.mode,
+                "agent": "claude", "mode": self.mode,
                 "effective_mode": effective_mode,
                 "route_reason": route_reason,
                 "input_tokens": estimate_tokens(request) if request else 0,
@@ -1969,6 +2134,73 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
             })
 
             write_json(self, 502, {"type": "error", "error": {"type": "router_error", "message": str(exc)}})
+
+    def _handle_voice_openai(self) -> None:
+        """Handle OpenAI-format /v1/chat/completions from the voice agent (Rachel).
+
+        Speed-first routing: no v1/v2/v3 mode layer (ensemble is too slow for voice).
+        Detects tools/reasoning/long-context and picks the fastest suitable model,
+        with storm-hardened parallel fallback. Logs with agent="voice" so the
+        unified dashboard can distinguish Rachel's traffic from Claude Code's.
+        """
+        start_time = time.time()
+        api_token = self.api_token
+        auth_header = self.headers.get("authorization")
+        if not api_token and auth_header and auth_header.lower().startswith("bearer "):
+            api_token = auth_header[7:]
+        request: dict[str, Any] = {}
+        try:
+            request = read_json_body(self)
+            capabilities = load_allowlist(self.allowlist_path)
+            candidates = voice_ordered_candidates(request, capabilities)
+            if not candidates:
+                raise RuntimeError("No eligible models for this voice request.")
+            policy = classify_voice_policy(request)
+            wants_stream = bool(request.get("stream"))
+
+            if wants_stream:
+                # Pass-through streaming (not used by server.py today, but supported).
+                final_model, fallback_notes = post_stream_with_model_fallback(
+                    request, capabilities, candidates[0], self.api_base, api_token, self
+                )
+                latency_ms = int((time.time() - start_time) * 1000)
+                log_decision({
+                    "agent": "voice", "mode": "speed-first", "effective_mode": "voice",
+                    "policy": policy, "selected_model": final_model.model,
+                    "fallback_notes": fallback_notes, "streamed": True,
+                    "input_tokens": estimate_tokens(request),
+                    "latency_ms": latency_ms, "status": "success",
+                })
+                return
+
+            response, final_model, fallback_notes = race_voice_openai(
+                request, candidates, self.api_base, api_token
+            )
+            latency_ms = int((time.time() - start_time) * 1000)
+            log_decision({
+                "agent": "voice", "mode": "speed-first", "effective_mode": "voice",
+                "policy": policy, "selected_model": final_model,
+                "fallback_notes": fallback_notes,
+                "input_tokens": estimate_tokens(request),
+                "output_tokens": (response.get("usage") or {}).get("completion_tokens", 0),
+                "latency_ms": latency_ms, "status": "success",
+            })
+            write_json(self, 200, response, headers={
+                "x-router-agent": "voice",
+                "x-router-selected-model": final_model,
+                "x-router-policy": policy,
+                "x-router-fallbacks": fallback_notes[:800],
+            })
+        except Exception as exc:
+            latency_ms = int((time.time() - start_time) * 1000)
+            log_decision({
+                "agent": "voice", "mode": "speed-first", "effective_mode": "voice",
+                "policy": classify_voice_policy(request) if request else "unknown",
+                "input_tokens": estimate_tokens(request) if request else 0,
+                "latency_ms": latency_ms, "status": "error",
+                "error_message": str(exc),
+            })
+            write_json(self, 502, {"error": {"message": str(exc), "type": "router_error"}})
 
 
 def serve(handler_cls: type[BaseHTTPRequestHandler], host: str, port: int) -> ThreadingHTTPServer:
