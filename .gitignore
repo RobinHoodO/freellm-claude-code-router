@@ -7,6 +7,7 @@ api_key.txt
 
 # ─── Real runtime data (contains real request logs / model probe results) ─────
 router_decisions.jsonl
+router_decisions_voice.jsonl
 models.allowlist.real.json
 *.real.json
 
