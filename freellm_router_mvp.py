@@ -69,7 +69,7 @@ V2_POLICIES = {
     ],
     "review": [
         "openai/gpt-oss-120b:free",
-        "z-ai/glm-4.5-air:free",
+        "qwen/qwen3-coder:free",
         "llama-3.3-70b-versatile",
     ],
     "summarization": [
@@ -80,7 +80,6 @@ V2_POLICIES = {
     "fast": [
         "llama-3.3-70b-versatile",
         "openai/gpt-oss-20b:free",
-        "z-ai/glm-4.5-air:free",
     ],
 }
 
@@ -608,17 +607,28 @@ def post_with_model_fallback(
     failures: list[str] = []
     for candidate in ordered_fallback_models(request, capabilities, preferred):
         upstream_payload = anthropic_to_openai_payload(request, candidate.model)
-        try:
-            response = http_json(
-                "POST",
-                join_v1_url(api_base, "/v1/chat/completions"),
-                upstream_payload,
-                api_token,
-            )
-            return response, candidate, "; ".join(failures)
-        except Exception as exc:
-            failures.append(f"{candidate.model}: {exc}")
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = http_json(
+                    "POST",
+                    join_v1_url(api_base, "/v1/chat/completions"),
+                    upstream_payload,
+                    api_token,
+                )
+                return response, candidate, "; ".join(failures)
+            except Exception as exc:
+                exc_str = str(exc)
+                is_rate_limit = any(kw in exc_str.lower() for kw in ["429", "rate limit", "exhausted", "too many requests"])
+                if is_rate_limit and attempt < max_retries:
+                    delay = attempt * 2
+                    print(f"[WARNING] Model {candidate.model} rate-limited on attempt {attempt}/{max_retries}. Retrying in {delay}s...", file=sys.stderr)
+                    time.sleep(delay)
+                else:
+                    failures.append(f"{candidate.model} (attempt {attempt}): {exc}")
+                    break
     raise RuntimeError("All compatible fallback models failed: " + " | ".join(failures))
+
 
 
 def first_eligible_by_names(eligible: list[ModelCapability], names: list[str]) -> ModelCapability | None:
