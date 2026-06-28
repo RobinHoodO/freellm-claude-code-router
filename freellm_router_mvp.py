@@ -56,30 +56,33 @@ def log_decision(entry: dict[str, Any]) -> None:
 
 V2_POLICIES = {
     "long-context": [
+        "llama-3.3-70b",
+        "gpt-oss-120b",
+        "gpt-4.1",
         "qwen/qwen3-coder:free",
         "gemini-2.5-flash",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "openai/gpt-oss-120b:free",
     ],
     "coding": [
-        "openai/gpt-oss-120b:free",
-        "llama-3.3-70b-versatile",
-        "openai/gpt-oss-20b:free",
+        "gpt-oss-120b",
+        "llama-3.3-70b",
+        "gpt-4.1",
+        "gpt-oss-20b",
         "qwen/qwen3-coder:free",
     ],
     "review": [
-        "openai/gpt-oss-120b:free",
-        "qwen/qwen3-coder:free",
-        "llama-3.3-70b-versatile",
+        "gpt-oss-120b",
+        "llama-3.3-70b",
+        "gpt-4.1",
     ],
     "summarization": [
-        "openai/gpt-oss-20b:free",
-        "llama-3.3-70b-versatile",
+        "gpt-oss-20b",
+        "llama-3.3-70b",
+        "gpt-4.1",
         "gemini-2.5-flash",
     ],
     "fast": [
-        "llama-3.3-70b-versatile",
-        "openai/gpt-oss-20b:free",
+        "llama-3.3-70b",
+        "gpt-oss-20b",
     ],
 }
 

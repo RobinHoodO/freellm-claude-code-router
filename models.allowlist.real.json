@@ -1,34 +1,31 @@
 {
-  "generatedAt": "2026-06-26T16:09:15Z",
+  "generatedAt": "2026-06-28T09:21:52Z",
   "models": [
     {
       "model": "qwen/qwen3-coder:free",
-      "claudeCodeCompatible": true,
-      "supportsTools": true,
+      "claudeCodeCompatible": false,
+      "supportsTools": false,
       "supportsStreaming": false,
-      "contextWindow": 1048576,
+      "contextWindow": 8192,
       "roles": [
         "coding",
-        "summarization",
-        "tool_use"
+        "summarization"
       ],
-      "notes": ""
+      "notes": "basic chat failed: POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{\"error\":{\"message\":\"All models rate-limited. Last error: OpenRouter API error 429: Provider returned error\",\"type\":\"rate_limit_error\"}}'; tool call failed: POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{\"error\":{\"message\":\"All models exhausted. Add more API keys or wait for rate limits to reset.\",\"type\":\"routing_error\"}}'"
     },
     {
       "model": "gemini-2.5-flash",
-      "claudeCodeCompatible": true,
-      "supportsTools": true,
+      "claudeCodeCompatible": false,
+      "supportsTools": false,
       "supportsStreaming": false,
       "contextWindow": 1048576,
       "roles": [
-        "coding",
-        "tool_use",
         "summarization"
       ],
-      "notes": ""
+      "notes": "basic chat failed: POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{\"error\":{\"message\":\"All models exhausted. Add more API keys or wait for rate limits to reset.\",\"type\":\"routing_error\"}}'; tool call failed: POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{\"error\":{\"message\":\"All models exhausted. Add more API keys or wait for rate limits to reset.\",\"type\":\"routing_error\"}}'"
     },
     {
-      "model": "z-ai/glm-4.5-air:free",
+      "model": "gpt-oss-120b",
       "claudeCodeCompatible": true,
       "supportsTools": true,
       "supportsStreaming": false,
@@ -41,30 +38,7 @@
       "notes": ""
     },
     {
-      "model": "codestral-latest",
-      "claudeCodeCompatible": false,
-      "supportsTools": false,
-      "supportsStreaming": false,
-      "contextWindow": 256000,
-      "roles": [
-        "coding",
-        "summarization"
-      ],
-      "notes": ""
-    },
-    {
-      "model": "qwen/qwen3-next-80b-a3b-instruct:free",
-      "claudeCodeCompatible": false,
-      "supportsTools": false,
-      "supportsStreaming": false,
-      "contextWindow": 262144,
-      "roles": [
-        "summarization"
-      ],
-      "notes": ""
-    },
-    {
-      "model": "openai/gpt-oss-120b:free",
+      "model": "gpt-oss-20b",
       "claudeCodeCompatible": true,
       "supportsTools": true,
       "supportsStreaming": false,
@@ -77,7 +51,7 @@
       "notes": ""
     },
     {
-      "model": "openai/gpt-oss-20b:free",
+      "model": "llama-3.3-70b",
       "claudeCodeCompatible": true,
       "supportsTools": true,
       "supportsStreaming": false,
@@ -90,11 +64,11 @@
       "notes": ""
     },
     {
-      "model": "llama-3.3-70b-versatile",
+      "model": "gpt-4.1",
       "claudeCodeCompatible": true,
       "supportsTools": true,
       "supportsStreaming": false,
-      "contextWindow": 131072,
+      "contextWindow": 128000,
       "roles": [
         "coding",
         "tool_use",

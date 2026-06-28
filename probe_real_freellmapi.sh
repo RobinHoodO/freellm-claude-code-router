@@ -11,7 +11,7 @@ else
   PYTHON_BIN="${CLAUDE_ROUTER_PYTHON:-python3}"
 fi
 
-MODELS="${MODELS:-qwen/qwen3-coder:free,gemini-2.5-flash,z-ai/glm-4.5-air:free,codestral-latest,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free,openai/gpt-oss-20b:free,llama-3.3-70b-versatile}"
+MODELS="${MODELS:-qwen/qwen3-coder:free,gemini-2.5-flash,gpt-oss-120b,gpt-oss-20b,llama-3.3-70b,gpt-4.1}"
 
 FREE_LLM_API_BASE="$FREE_LLM_API_BASE" \
 env -u PYTHONHOME -u PYTHONPATH -u PYTHONEXECUTABLE "$PYTHON_BIN" freellm_router_mvp.py probe \
