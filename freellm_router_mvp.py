@@ -236,6 +236,20 @@ def extract_text_from_anthropic_messages(messages: list[dict[str, Any]]) -> str:
     return "\n".join(chunks)
 
 
+def sanitize_tool_parameters(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        new_schema = {}
+        for k, v in schema.items():
+            if k == "enum" and isinstance(v, list) and len(v) > 10:
+                # Strip massive enum lists (like files list) to prevent token bloat
+                continue
+            new_schema[k] = sanitize_tool_parameters(v)
+        return new_schema
+    elif isinstance(schema, list):
+        return [sanitize_tool_parameters(item) for item in schema]
+    return schema
+
+
 def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str, Any]:
     openai_messages: list[dict[str, str]] = []
     system = request.get("system")
@@ -262,12 +276,16 @@ def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str
                 "function": {
                     "name": tool.get("name", "tool"),
                     "description": tool.get("description", ""),
-                    "parameters": tool.get("input_schema", {"type": "object", "properties": {}}),
+                    "parameters": sanitize_tool_parameters(tool.get("input_schema", {"type": "object", "properties": {}})),
                 },
             }
             for tool in tools
         ]
+        tools_str = json.dumps(payload["tools"])
+        print(f"[DEBUG] tools_payload_size: {len(tools_str)} chars. First 500: {tools_str[:500]}", file=sys.stderr)
     return payload
+
+
 
 
 def openai_to_anthropic_response(openai_response: dict[str, Any], selected_model: str) -> dict[str, Any]:
