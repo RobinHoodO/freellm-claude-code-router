@@ -904,6 +904,638 @@ class MockFreeLLMHandler(BaseHTTPRequestHandler):
         )
 
 
+def get_dashboard_html() -> str:
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FreeLLM Claude Router Control Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(22, 28, 45, 0.6);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary-glow: linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%);
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent-purple: #8b5cf6;
+            --accent-blue: #3b82f6;
+            --status-success: #10b981;
+            --status-error: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(124, 58, 237, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.05) 0%, transparent 40%);
+        }
+
+        header {
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(12px);
+            background: rgba(11, 15, 25, 0.8);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-indicator {
+            width: 12px;
+            height: 12px;
+            background: var(--primary-glow);
+            border-radius: 50%;
+            box-shadow: 0 0 12px var(--accent-purple);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 16px var(--accent-blue); }
+            100% { transform: scale(0.9); opacity: 0.6; }
+        }
+
+        h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(to right, #ffffff, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        main {
+            flex: 1;
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .stats-label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+        }
+
+        .stats-val {
+            font-size: 2.25rem;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
+
+        .mode-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .mode-title-sec {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .mode-selector {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            padding: 0.25rem;
+            border-radius: 12px;
+            gap: 0.25rem;
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .mode-btn:hover {
+            color: var(--text-color);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .mode-btn.active {
+            background: var(--primary-glow);
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
+        }
+
+        .mode-desc {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+        }
+
+        .history-section {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            background: var(--card-bg);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.875rem;
+        }
+
+        th, td {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.02);
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-success {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--status-success);
+        }
+
+        .badge-error {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--status-error);
+        }
+
+        .badge-info {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--accent-blue);
+        }
+
+        .latency-bar {
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            overflow: hidden;
+            width: 80px;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+
+        .latency-progress {
+            height: 100%;
+            background: var(--accent-blue);
+            border-radius: 3px;
+        }
+
+        .no-data {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 3rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo-section">
+            <div class="logo-indicator"></div>
+            <h1>FreeLLM Router Control Panel</h1>
+        </div>
+        <div id="connection-status" class="badge badge-success">Online</div>
+    </header>
+
+    <main>
+        <div class="stats-grid">
+            <div class="card">
+                <div class="stats-label">Total Requests</div>
+                <div class="stats-val" id="total-requests">0</div>
+            </div>
+            <div class="card">
+                <div class="stats-label">Success Rate</div>
+                <div class="stats-val" id="success-rate">0%</div>
+            </div>
+            <div class="card">
+                <div class="stats-label">Avg Latency</div>
+                <div class="stats-val" id="avg-latency">0ms</div>
+            </div>
+        </div>
+
+        <div class="card mode-container">
+            <div class="mode-title-sec">
+                <div class="section-title">Router Version Mode</div>
+                <div class="badge badge-info" id="current-mode-badge">MODE: v2</div>
+            </div>
+            <div class="mode-selector">
+                <button class="mode-btn" onclick="updateMode('v1')" id="btn-v1">v1 (Single)</button>
+                <button class="mode-btn" onclick="updateMode('v2')" id="btn-v2">v2 (Task-Aware)</button>
+                <button class="mode-btn" onclick="updateMode('v3')" id="btn-v3">v3 (Ensemble)</button>
+                <button class="mode-btn" onclick="updateMode('v4')" id="btn-v4">v4 (Meta)</button>
+            </div>
+            <div class="mode-desc" id="mode-explanation">
+                Loading mode details...
+            </div>
+        </div>
+
+        <div class="history-section">
+            <div class="section-header">
+                <div class="section-title">Recent Routing Decisions (Last 50)</div>
+                <button class="mode-btn" onclick="fetchDecisions()" style="padding:0.4rem 0.8rem; font-size:0.8rem; border:1px solid var(--border-color); border-radius:6px;">Refresh Now</button>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Mode</th>
+                            <th>Matched Policy</th>
+                            <th>Target Model</th>
+                            <th>Latency</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="decisions-body">
+                        <tr>
+                            <td colspan="6" class="no-data">Loading decisions...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const EXPLANATIONS = {
+            v1: "Version 1 runs queries directly against the single default model, bypassing task-aware routing policies.",
+            v2: "Version 2 analyzes the task complexity, system tools, and prompt tags to route to the most optimal coding, summarization, or review model.",
+            v3: "Version 3 runs parallel queries to multiple advisor models (GPT-OSS, Llama 3.3) and synthesizes their feedback to generate high-quality critiques.",
+            v4: "Version 4 (Meta-Router) automatically dynamically decides whether to use a fast, cheap single model (v2) or route to the expensive ensemble model (v3)."
+        };
+
+        let activeMode = 'v1';
+
+        async function fetchConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const config = await res.json();
+                setActiveModeBtn(config.mode);
+            } catch (err) {
+                console.error("Failed to fetch config", err);
+                document.getElementById('connection-status').className = "badge badge-error";
+                document.getElementById('connection-status').textContent = "Offline";
+            }
+        }
+
+        function setActiveModeBtn(mode) {
+            activeMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+            const btn = document.getElementById('btn-' + mode);
+            if (btn) btn.classList.add('active');
+            document.getElementById('current-mode-badge').textContent = 'MODE: ' + mode.toUpperCase();
+            document.getElementById('mode-explanation').textContent = EXPLANATIONS[mode] || '';
+        }
+
+        async function updateMode(mode) {
+            try {
+                const res = await fetch('/api/config/update', {
+                    method: 'POST',
+                    headers: {'content-type': 'application/json'},
+                    body: JSON.stringify({mode})
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    setActiveModeBtn(mode);
+                }
+            } catch (err) {
+                console.error("Failed to update mode", err);
+            }
+        }
+
+        async function fetchDecisions() {
+            try {
+                const res = await fetch('/api/decisions');
+                const data = await res.json();
+                renderDecisions(data.decisions);
+            } catch (err) {
+                console.error("Failed to fetch decisions", err);
+            }
+        }
+
+        function renderDecisions(decisions) {
+            const body = document.getElementById('decisions-body');
+            if (!decisions || decisions.length === 0) {
+                body.innerHTML = '<tr><td colspan="6" class="no-data">No routing decisions logged yet.</td></tr>';
+                return;
+            }
+
+            // Calculate stats
+            const total = decisions.length;
+            const successCount = decisions.filter(d => d.status === 'success').length;
+            const successRate = total > 0 ? Math.round((successCount / total) * 100) : 0;
+            const latencies = decisions.filter(d => d.latency_ms !== undefined).map(d => d.latency_ms);
+            const avgLatency = latencies.length > 0 ? Math.round(latencies.reduce((a,b) => a+b, 0) / latencies.length) : 0;
+
+            document.getElementById('total-requests').textContent = total;
+            document.getElementById('success-rate').textContent = successRate + '%';
+            document.getElementById('avg-latency').textContent = avgLatency + 'ms';
+
+            body.innerHTML = '';
+            // Show recent decisions first
+            [...decisions].reverse().forEach(dec => {
+                const tr = document.createElement('tr');
+                
+                const time = dec.timestamp ? new Date(dec.timestamp).toLocaleTimeString() : 'N/A';
+                const mode = dec.mode || 'v1';
+                const policy = dec.policy || 'none';
+                const model = dec.selected_model || 'N/A';
+                const latency = dec.latency_ms !== undefined ? dec.latency_ms + 'ms' : 'N/A';
+                
+                const statusBadge = dec.status === 'success' 
+                    ? '<span class="badge badge-success">Success</span>' 
+                    : `<span class="badge badge-error" title="${dec.error_message || ''}">Error</span>`;
+
+                const maxLatencyForBar = 8000;
+                const percentage = dec.latency_ms ? Math.min(100, (dec.latency_ms / maxLatencyForBar) * 100) : 0;
+
+                tr.innerHTML = `
+                    <td>${time}</td>
+                    <td><span class="badge badge-info">${mode}</span></td>
+                    <td><code>${policy}</code></td>
+                    <td><span style="font-weight:600;">${model}</span></td>
+                    <td>
+                        <div class="latency-bar">
+                            <div class="latency-progress" style="width: ${percentage}%;"></div>
+                        </div>
+                        ${latency}
+                    </td>
+                    <td>${statusBadge}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Init and Poll
+        fetchConfig();
+        fetchDecisions();
+        setInterval(fetchConfig, 3000);
+        setInterval(fetchDecisions, 3000);
+    </script>
+</body>
+</html>"""
+
+
+def stream_openai_to_anthropic(
+    openai_response: http.client.HTTPResponse,
+    handler: BaseHTTPRequestHandler,
+    model_name: str,
+) -> None:
+    message_id = f"msg_mvp_{int(time.time())}"
+    write_sse(handler, "message_start", {
+        "type": "message_start",
+        "message": {
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "model": model_name,
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0}
+        }
+    })
+    
+    current_content_type = None
+    current_index = 0
+    
+    for line_bytes in openai_response:
+        line = line_bytes.decode("utf-8").strip()
+        if not line:
+            continue
+        if line.startswith("data:"):
+            data_str = line[5:].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta = choice.get("delta", {})
+                
+                # Text Content
+                if "content" in delta and delta["content"]:
+                    text_chunk = delta["content"]
+                    if current_content_type != "text":
+                        if current_content_type is not None:
+                            write_sse(handler, "content_block_stop", {"type": "content_block_stop", "index": current_index})
+                            current_index += 1
+                        current_content_type = "text"
+                        write_sse(handler, "content_block_start", {
+                            "type": "content_block_start",
+                            "index": current_index,
+                            "content_block": {"type": "text", "text": ""}
+                        })
+                    
+                    write_sse(handler, "content_block_delta", {
+                        "type": "content_block_delta",
+                        "index": current_index,
+                        "delta": {"type": "text_delta", "text": text_chunk}
+                    })
+                    
+                # Tool Call Content
+                elif "tool_calls" in delta and delta["tool_calls"]:
+                    tool_call = delta["tool_calls"][0]
+                    func = tool_call.get("function", {})
+                    
+                    if current_content_type != "tool_use":
+                        if current_content_type is not None:
+                            write_sse(handler, "content_block_stop", {"type": "content_block_stop", "index": current_index})
+                            current_index += 1
+                        current_content_type = "tool_use"
+                        tool_id = tool_call.get("id") or f"toolu_mvp_{int(time.time())}"
+                        tool_name = func.get("name", "tool")
+                        
+                        write_sse(handler, "content_block_start", {
+                            "type": "content_block_start",
+                            "index": current_index,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": tool_id,
+                                "name": tool_name,
+                                "input": {}
+                            }
+                        })
+                        
+                    if "arguments" in func:
+                        arg_chunk = func["arguments"]
+                        write_sse(handler, "content_block_delta", {
+                            "type": "content_block_delta",
+                            "index": current_index,
+                            "delta": {"type": "input_json_delta", "partial_json": arg_chunk}
+                        })
+                        
+            except Exception as e:
+                pass
+                
+    if current_content_type is not None:
+        write_sse(handler, "content_block_stop", {"type": "content_block_stop", "index": current_index})
+        
+    write_sse(handler, "message_delta", {
+        "type": "message_delta",
+        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        "usage": {"output_tokens": 0}
+    })
+    write_sse(handler, "message_stop", {"type": "message_stop"})
+
+
+def post_stream_with_model_fallback(
+    request: dict[str, Any],
+    capabilities: list[ModelCapability],
+    preferred: ModelCapability,
+    api_base: str,
+    api_token: str | None,
+    handler: BaseHTTPRequestHandler,
+) -> tuple[ModelCapability, str]:
+    failures: list[str] = []
+    for candidate in ordered_fallback_models(request, capabilities, preferred):
+        upstream_payload = anthropic_to_openai_payload(request, candidate.model)
+        upstream_payload["stream"] = True
+        
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                parsed = urllib.parse.urlparse(api_base)
+                conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+                conn = conn_cls(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=30)
+                
+                path = parsed.path or "/"
+                if path.endswith("/"):
+                    path = path[:-1]
+                path += "/chat/completions"
+                
+                headers = {"content-type": "application/json"}
+                if api_token:
+                    headers["authorization"] = f"Bearer {api_token}"
+                
+                conn.request("POST", path, body=json.dumps(upstream_payload).encode("utf-8"), headers=headers)
+                response = conn.getresponse()
+                
+                if response.status != 200:
+                    resp_body = response.read()
+                    err_msg = f"HTTP {response.status}: {resp_body}"
+                    conn.close()
+                    raise RuntimeError(err_msg)
+                
+                handler.send_response(200)
+                handler.send_header("content-type", "text/event-stream")
+                handler.send_header("cache-control", "no-cache")
+                handler.send_header("connection", "close")
+                handler.end_headers()
+                handler.close_connection = True
+                
+                stream_openai_to_anthropic(response, handler, candidate.model)
+                conn.close()
+                return candidate, "; ".join(failures)
+                
+            except Exception as exc:
+                exc_str = str(exc)
+                is_rate_limit = any(kw in exc_str.lower() for kw in ["429", "rate limit", "exhausted", "too many requests"])
+                if is_rate_limit and attempt < max_retries:
+                    delay = attempt * 2
+                    print(f"[WARNING] Streaming model {candidate.model} rate-limited on attempt {attempt}/{max_retries}. Retrying in {delay}s...", file=sys.stderr)
+                    time.sleep(delay)
+                else:
+                    failures.append(f"{candidate.model} (attempt {attempt}): {exc}")
+                    break
+    raise RuntimeError("All compatible fallback models failed: " + " | ".join(failures))
+
+
 class RouterProxyHandler(BaseHTTPRequestHandler):
     server_version = "FreeLLMRouterProxy/0.1"
     api_base = "http://127.0.0.1:8091"
@@ -916,6 +1548,42 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urllib.parse.urlparse(self.path).path
+        if path == "/dashboard":
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(get_dashboard_html().encode("utf-8"))
+            return
+        if path == "/api/decisions":
+            decisions = []
+            try:
+                with log_lock:
+                    if os.path.exists(DECISION_LOG_PATH):
+                        with open(DECISION_LOG_PATH, "r", encoding="utf-8") as f:
+                            lines = f.readlines()
+                            for line in lines[-50:]:
+                                try:
+                                    decisions.append(json.loads(line))
+                                except:
+                                    pass
+            except Exception as e:
+                print(f"Error reading decisions: {e}", file=sys.stderr)
+            write_json(self, 200, {"decisions": decisions})
+            return
+        if path == "/api/config":
+            capabilities = []
+            try:
+                capabilities = [
+                    {"model": cap.model, "claudeCodeCompatible": cap.claude_code_compatible}
+                    for cap in load_allowlist(self.allowlist_path)
+                ]
+            except:
+                pass
+            write_json(self, 200, {
+                "mode": RouterProxyHandler.mode,
+                "allowlist": capabilities
+            })
+            return
         if path in {"/", "/health"}:
             write_json(self, 200, {"ok": True})
             return
@@ -941,7 +1609,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         path = urllib.parse.urlparse(self.path).path
-        if path in {"/", "/health", "/v1/models"}:
+        if path in {"/", "/health", "/v1/models", "/dashboard", "/api/decisions", "/api/config"}:
             self.send_response(200)
             self.end_headers()
             return
@@ -950,6 +1618,15 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
+        if path == "/api/config/update":
+            data = read_json_body(self)
+            new_mode = data.get("mode")
+            if new_mode in {"v1", "v2", "v3", "v4"}:
+                RouterProxyHandler.mode = new_mode
+                write_json(self, 200, {"ok": True, "mode": new_mode})
+            else:
+                write_json(self, 400, {"error": "invalid mode"})
+            return
         if path == "/v1/messages/count_tokens":
             request = read_json_body(self)
             write_json(self, 200, {"input_tokens": estimate_tokens(request)})
@@ -1010,6 +1687,30 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
                 return
 
             selected, policy = choose_model_for_mode(request, capabilities, effective_mode)
+            if request.get("stream") is True:
+                final_model, fallback_notes = post_stream_with_model_fallback(
+                    request,
+                    capabilities,
+                    selected,
+                    self.api_base,
+                    self.api_token,
+                    self,
+                )
+                latency_ms = int((time.time() - start_time) * 1000)
+                log_decision({
+                    "mode": self.mode,
+                    "effective_mode": effective_mode,
+                    "route_reason": route_reason,
+                    "policy": policy,
+                    "selected_model": final_model.model,
+                    "fallback_notes": fallback_notes,
+                    "input_tokens": estimate_tokens(request),
+                    "output_tokens": 0,
+                    "latency_ms": latency_ms,
+                    "status": "success"
+                })
+                return
+
             upstream_response, final_model, fallback_notes = post_with_model_fallback(
                 request,
                 capabilities,
@@ -1034,13 +1735,11 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
                 "status": "success"
             })
 
-            if request.get("stream") is True:
-                write_anthropic_stream(self, anthropic_response)
-                return
             headers = {
                 "x-router-selected-model": final_model.model,
                 "x-router-mode": self.mode,
                 "x-router-selected-version": effective_mode,
+
                 "x-router-policy": policy,
                 "x-router-route-reason": route_reason,
             }
