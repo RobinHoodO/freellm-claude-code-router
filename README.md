@@ -1,487 +1,387 @@
 # FreeLLM Claude Code Router
 
-This experiment lets Claude Code run through your FreeLLMAPI stack.
+A local gateway that lets **Claude Code** drive free / cheap alternate models through a **FreeLLMAPI** backend, with a multi-version routing engine, a live dashboard, storm-hardened fallback, and a self-improving skill optimizer.
 
-The baseline command is:
-
-```bash
-claude-routerv1
-```
-
-The current meta-router command is:
+> Runs Claude Code against your own FreeLLMAPI stack instead of the Anthropic API — translating Anthropic-format requests to OpenAI-compatible ones and picking the best model/strategy per request.
 
 ```bash
-claude-routerv4
+claude-routerv4   # auto meta-router: picks v1, v2, or v3 per request
 ```
 
-There is also a clickable local map:
+---
 
-[start-here.html](./start-here.html)
+## Credits
 
-Agent handover:
+This project is **inspired by and builds on**:
 
-[HANDOVER.md](./HANDOVER.md)
+- **[`musistudio/claude-code-router`](https://github.com/musistudio/claude-code-router)** — the original Claude Code routing fork that lets you decide how Claude Code interacts with the model. This repo's proxy layer and Anthropic↔OpenAI translation pattern derive from that work, extended here with multi-version routing, an ensemble mode, a live dashboard, and storm-hardened fallback.
+- **[`karpathy/autoresearch`](https://github.com/karpathy/autoresearch)** — the self-improving research loop pattern applied in the bundled `autoresearch` optimizer and the reliability experiments.
 
-## Simple Explanation
+All code in this repo is original to the FreeLLM Claude Code Router project unless otherwise noted in the file header.
 
-### Original FreeLLMAPI System
+---
 
-FreeLLMAPI is already a router.
-
-Normally, an app talks to it like this:
-
-```text
-App
-  -> FreeLLMAPI
-    -> OpenRouter / Groq / Ollama / SambaNova / OpenCode / Cerebras / etc.
-```
-
-If the app sends:
-
-```json
-{ "model": "auto" }
-```
-
-FreeLLMAPI chooses a model.
-
-If the app sends:
-
-```json
-{ "model": "qwen/qwen3-coder:free" }
-```
-
-FreeLLMAPI tries that model, but may still fall back if the model fails, rate-limits, or is unavailable.
-
-So the original FreeLLMAPI system already handles:
-
-```text
-model selection
-provider fallback
-rate-limit handling
-free-tier routing
-```
-
-### The Problem
-
-Claude Code does not naturally speak FreeLLMAPI's API format.
+## What it does
 
 Claude Code expects Anthropic-style endpoints:
 
-```text
+```
 /v1/messages
 /v1/messages/count_tokens
 ```
 
 FreeLLMAPI exposes OpenAI-compatible endpoints:
 
-```text
+```
 /v1/chat/completions
 /v1/responses
 /v1/embeddings
 ```
 
-So Claude Code and FreeLLMAPI do not plug together cleanly without an adapter.
+This project inserts a local adapter:
 
-### Our Adapted System
-
-We added a local adapter/router in the middle:
-
-```text
+```
 Claude Code
-  -> local Claude router proxy
-    -> FreeLLMAPI
-      -> real model providers
+  └── local Anthropic-compatible proxy  (this repo, port 8792)
+        └── FreeLLMAPI  (OpenAI-compatible, port 3004)
+              └── provider/model fallback inside FreeLLMAPI
 ```
 
-The v1 local proxy runs here:
+### Why a router in front of a router?
 
-```text
-http://127.0.0.1:8787
-```
+FreeLLMAPI is *already* a router (it falls back across providers/models). So why another layer?
 
-Other version ports:
+1. **Protocol translation** — Claude Code speaks Anthropic format; FreeLLMAPI speaks OpenAI format. This proxy translates in both directions.
+2. **Capability awareness** — Claude Code needs models that support tool calls and large context windows. The proxy probes each model, builds an allowlist of *Claude-Code-compatible* models, and only routes to those.
+3. **Context-aware tool pruning** — Claude Code injects MCP tool schemas under `<system-reminder>` blocks. The proxy strips these before evaluating, shrinking the tools payload by ~91% (324k → 27k chars) so requests fit in context.
+4. **Strategy selection** — different requests benefit from different strategies (single fast model vs. multi-model ensemble). The v4 meta-router picks the right one per request.
 
-```text
-v2: http://127.0.0.1:8791
-v3: http://127.0.0.1:8789
-v4: http://127.0.0.1:8792
-```
+---
 
-FreeLLMAPI runs here:
+## The Full Stack
 
-```text
-http://127.0.0.1:3004/v1
-```
+To run this end-to-end you need four layers. This repo is **layer 2**.
 
-So the adapted system is:
+### Layer 1 — FreeLLMAPI (backend, not in this repo)
 
-```text
-Claude Code speaks Anthropic
-  -> our proxy translates
-    -> FreeLLMAPI speaks OpenAI-compatible
-      -> free/cheap model providers answer
-```
+An OpenAI-compatible API gateway you run on a server. It aggregates free/cheap model providers (OpenRouter free tiers, GitHub Models, Ollama Cloud, Azure, etc.) and exposes one unified `/v1` endpoint with its own provider fallback.
 
-Before:
+- **Role:** serves `/v1/chat/completions`, `/v1/models`
+- **Port:** `3004` locally (SSH-tunneled from your server's `3001`)
+- **Secret:** a unified API key stored in the server's SQLite DB — fetched over SSH by the launcher (see `.env.example`)
+- **Dashboard:** `http://127.0.0.1:3004`
 
-```text
-Other apps -> FreeLLMAPI -> free models
-```
+You provide your own FreeLLMAPI instance. See `HANDOVER.md` for how the SSH tunnel + key fetch works.
 
-Now:
+### Layer 2 — FreeLLM Claude Code Router (this repo)
 
-```text
-Claude Code -> our adapter -> FreeLLMAPI -> free models
-```
+The local proxy that Claude Code actually talks to.
 
-### What `claude-routerv1` Does
+- **Role:** Anthropic↔OpenAI translation, model allowlisting, multi-version routing, storm-hardened fallback, dashboard
+- **Port:** `8792` (v4 auto mode; also `8787` v1, `8791` v2, `8789` v3)
+- **Code:** `freellm_router_mvp.py` (single-file proxy + mock API + probe + smoke tests)
+- **Secret:** reads `FREE_LLM_API_TOKEN` from `.env` (see `.env.example`)
 
-When you run:
+### Layer 3 — Claude Code (the client)
+
+Anthropic's official CLI coding agent. Pointed at the local proxy instead of `api.anthropic.com`:
 
 ```bash
-claude-routerv1
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8792
+claude
 ```
 
-it:
+### Layer 4 — Autoresearch optimizer (optional, bundled)
 
-1. Starts the local proxy if needed.
-2. Points Claude Code at `http://127.0.0.1:8787`.
-3. Gives Claude a concrete model name, currently `qwen/qwen3-coder:free`.
-4. Converts Claude's Anthropic request into a FreeLLMAPI chat completion request.
-5. Sends the request to FreeLLMAPI.
-6. Lets FreeLLMAPI use the requested model or fall back.
-7. Converts the answer back into Claude's expected format.
+A self-improving loop that stress-tests the router under real load, measures success rate + latency, and feeds findings back. Applies the [Karpathy autoresearch](https://github.com/karpathy/autoresearch) pattern to the router.
 
-Important distinction:
+- **Code:** `autoresearch.py`, `experiment_harness.py`, `auto_optimizer.py`, `self_healing_daemon.py`
+- **Runs:** `python3 autoresearch.py --skill hybrid-rag --cycles 10`
 
-```text
-requested_model
-  What our proxy asks FreeLLMAPI for.
+---
 
-actual model
-  What FreeLLMAPI really used after fallback.
-```
+## Quick Start
 
-Example:
+### Prerequisites
 
-```text
-requested_model: qwen/qwen3-coder:free
-actual model: sambanova / gpt-oss-120b
-```
+- Python 3.10+ (stdlib only — no pip dependencies)
+- A running FreeLLMAPI instance reachable over HTTP
+- Claude Code CLI installed (`claude`)
+- The unified FreeLLMAPI key (in `.env`)
 
-That is normal. It means FreeLLMAPI's fallback system did its job.
-
-## Mental Model
-
-```text
-You
-  -> claude-routerv1
-    -> Claude Code
-      -> local Anthropic-compatible proxy on 127.0.0.1:8787
-        -> FreeLLMAPI on 127.0.0.1:3004/v1
-          -> OpenRouter / Groq / SambaNova / Ollama / OpenCode / Cerebras / etc.
-```
-
-Claude Code speaks Anthropic's Messages API. FreeLLMAPI speaks OpenAI-compatible APIs. The local proxy translates between them and decides which FreeLLMAPI model to request.
-
-## Surfaces
-
-| Surface | URL / Command | Purpose |
-| --- | --- | --- |
-| Claude launcher v1 | `claude-routerv1` | Start Claude through the v1 router |
-| Generic launcher | `claude-router --mode v1` | Same as v1, mode-explicit |
-| Local proxy | `http://127.0.0.1:8787` | Anthropic-compatible gateway for Claude |
-| Proxy models | `http://127.0.0.1:8787/v1/models` | Shows allowlisted router models |
-| FreeLLMAPI | `http://127.0.0.1:3004/v1` | OpenAI-compatible backend |
-| FreeLLMAPI dashboard | `http://127.0.0.1:3004` | UI/dashboard through SSH tunnel |
-| iframe proxy | `http://127.0.0.1:3014` | Dashboard-friendly proxy |
-
-## Commands
-
-Start Claude:
+### 1. Configure secrets
 
 ```bash
-claude-routerv1
+cp .env.example .env
+# Edit .env and set FREE_LLM_API_TOKEN
 ```
 
-One-shot test:
+### 2. Probe your FreeLLMAPI (build the model allowlist)
 
 ```bash
-claude-routerv1 -p 'Say ROUTER_V1_OK and nothing else.' --output-format text
+python3 freellm_router_mvp.py probe \
+  --api-base http://127.0.0.1:3004/v1 \
+  --auth-token "$FREE_LLM_API_TOKEN" \
+  --output models.allowlist.real.json
 ```
 
-Manage the local proxy:
+This tests each model for basic chat, tool-call support, and context window, then writes the allowlist of Claude-Code-compatible models.
+
+### 3. Start the proxy (v4 auto mode)
 
 ```bash
-claude-router --status
-claude-router --start-proxy
-claude-router --stop
-claude-router --probe
+set -a; source .env; set +a
+python3 freellm_router_mvp.py proxy \
+  --api-base http://127.0.0.1:3004/v1 \
+  --allowlist models.allowlist.real.json \
+  --port 8792 \
+  --mode v4 \
+  --api-token "$FREE_LLM_API_TOKEN"
 ```
 
-Legacy aliases:
+### 4. Point Claude Code at it
 
 ```bash
-claude-router
-claude-router-v1
-claude-router --mode v1
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8792
+claude -p 'Say ROUTER_OK and nothing else.'
 ```
 
-## Version Overview
-
-| Version | Command | Status | Behavior |
-| --- | --- | --- | --- |
-| v1 | `claude-routerv1` | Working | Single selected model request, FreeLLMAPI fallback underneath |
-| v2 | `claude-routerv2` | Working | Task-aware routing policies like coding, fast, long-context |
-| v3 | `claude-routerv3` | Working | Multi-model ensemble/orchestrator for text-only requests; safe single-model fallback for tool requests |
-| v4 | `claude-routerv4` | Working | Meta-router that chooses v1, v2, or v3 per request |
-
-## Version 1
-
-Details: [VERSION-1.md](./VERSION-1.md)
-
-Version 1 sends each Claude request to **one selected FreeLLMAPI model**.
-
-```text
-Claude request
-  -> local proxy checks tools/context/allowlist
-    -> selected requested model
-      -> FreeLLMAPI
-        -> provider fallback if needed
-```
-
-The launcher presents Claude Code with:
+### 5. Or use the launcher wrapper
 
 ```bash
-ANTHROPIC_BASE_URL=http://127.0.0.1:8787
-ANTHROPIC_MODEL=qwen/qwen3-coder:free
-ANTHROPIC_SMALL_FAST_MODEL=qwen/qwen3-coder:free
+# Installs claude-router, claude-routerv1..v4 into ~/.local/bin
+# Fetches the key over SSH, starts the proxy, launches claude
+claude-routerv4
 ```
 
-Claude Code did not like the synthetic model name `router-auto`, so v1 presents a concrete allowlisted model. The local proxy can still choose behind the scenes.
+---
 
-## Requested Model vs Actual Model
+## Router Versions
 
-There are two model names to understand.
+Four experimental strategies, all selectable via one command:
 
-```text
-requested_model
-  The model our proxy asks FreeLLMAPI to use.
+| Command | Version | Strategy |
+|---------|---------|----------|
+| `claude-routerv1` | v1 | One selected compatible model |
+| `claude-routerv2` | v2 | Task-aware policy router with ordered fallback across allowlisted models |
+| `claude-routerv3` | v3 | Multi-advisor ensemble for text-only; falls back to v2 single-model when tools present |
+| `claude-routerv4` | v4 | **Meta-router** — auto-selects v1/v2/v3 per request (recommended) |
 
-actual model
-  The provider/model FreeLLMAPI really used after fallback.
+### v4 auto-routing rules
+
+The meta-router inspects the request and picks the strategy:
+
+```
+tools present             -> v2  (single driver model needed for tool calls)
+very long context         -> v2
+coding/fixing/debugging/  -> v2
+  testing/review
+compare/tradeoff/         -> v3  (ensemble benefits from multiple perspectives)
+  brainstorm/synthesize/
+  strategy/architecture
+short simple request      -> v1
+summary/overview         -> v2
+fallback                 -> v2
 ```
 
-Example from a successful v1 test:
+Debug headers on every response:
 
-```text
-requested_model: qwen/qwen3-coder:free
-first attempt: openrouter / qwen/qwen3-coder:free -> 429
-successful actual model: sambanova / gpt-oss-120b
+```
+x-router-mode
+x-router-selected-version
+x-router-selected-model
+x-router-policy
+x-router-route-reason
+x-router-advisor-models
+x-router-fallbacks
 ```
 
-This is expected. FreeLLMAPI is itself a router/fallback system.
+### v2 policies
 
-## Current Allowlisted Models
+v2 classifies requests into a deterministic policy and picks one model, falling back across compatible models on failure:
 
-The real allowlist lives in:
-
-[models.allowlist.real.json](./models.allowlist.real.json)
-
-Current tested candidates:
-
-```text
-qwen/qwen3-coder:free
-gemini-2.5-flash
-z-ai/glm-4.5-air:free
-openai/gpt-oss-120b:free
-openai/gpt-oss-20b:free
-llama-3.3-70b-versatile
+```
+long-context
+coding
+review
+summarization
+fast
 ```
 
-These are marked usable when they pass:
+---
 
-```text
-basic chat
-tool calls
-context window large enough for Claude Code startup/tool prompts
+## Storm-Hardened Fallback
+
+The fallback engine is what keeps success rate high under upstream rate-limit storms. Three design choices:
+
+1. **Parallel first-attempt race** — all eligible models are raced in parallel; the first 200 wins. Happy-path latency ≈ one round trip, not N × timeout.
+2. **Fail-fast on non-retryable errors** — HTTP 401/400/403/404 (auth, catalog, invalid request) mark a model dead instantly. No same-model retry.
+3. **No same-model retry on 429** — free-tier rate limits are model-wide; retrying the same model seconds later still fails. The router moves to the next model, with at most one short global backoff if every model is rate-limited.
+
+This turns a rate-limit storm from a 30–70s hang (the old 3×-per-model `time.sleep` loop) into ~one failed round trip, eliminating client-side broken pipes.
+
+See `experiment_harness.py` to reproduce the stress test:
+
+```bash
+python3 experiment_harness.py --requests 50
 ```
 
-FreeLLMAPI may still fallback to another provider/model at runtime.
+---
+
+## Live Dashboard
+
+```
+http://127.0.0.1:8792/dashboard
+```
+
+Shows live status, current mode, and the last 50 routing decisions with latency bars and error breakdown. The headline success-rate + avg-latency metrics are computed over the last 50 decisions.
+
+JSON API:
+
+```
+GET /api/decisions   → {"decisions": [...last 50]}
+GET /api/config      → {"mode": "v4"}
+POST /api/config/update  {"mode": "v2"}
+GET /health          → {"ok": true}
+```
+
+---
 
 ## Files
 
-| File | Purpose |
-| --- | --- |
-| [freellm_router_mvp.py](./freellm_router_mvp.py) | Python proxy, mock API, probe, and test harness |
-| [probe_real_freellmapi.sh](./probe_real_freellmapi.sh) | Regenerate real allowlist from FreeLLMAPI |
-| [run_real_proxy.sh](./run_real_proxy.sh) | Start proxy against FreeLLMAPI |
-| [models.allowlist.real.json](./models.allowlist.real.json) | Real model compatibility allowlist |
-| [models.allowlist.example.json](./models.allowlist.example.json) | Example allowlist |
-| [VERSION-1.md](./VERSION-1.md) | v1 behavior and test details |
-| [VERSION-2.md](./VERSION-2.md) | v2 task-aware routing details |
-| [VERSION-3.md](./VERSION-3.md) | v3 ensemble routing details |
-| [VERSION-4.md](./VERSION-4.md) | v4 meta-router details |
-| [HANDOVER.md](./HANDOVER.md) | Full project context for another agent |
-| [start-here.html](./start-here.html) | Clickable local map |
+```
+freellm_router_mvp.py          Main proxy: Anthropic↔OpenAI translation, routing, fallback, dashboard
+experiment_harness.py          Stress-test harness (drives mixed traffic, reports success/latency)
+auto_optimizer.py              Automated scenario optimizer
+self_healing_daemon.py         Watches router_decisions.jsonl, self-corrects policies
+autoresearch.py                Karpathy-pattern self-improving loop (in skills/research/autoresearch/)
+run_integration_tests.py       Integration test suite
+run_reliability_experiment.py  Reliability experiment runner
+probe_real_freellmapi.sh       Regenerate the real allowlist
+run_real_proxy.sh              Manual proxy runner
 
-Installed commands:
+models.allowlist.example.json  Example allowlist (committed)
+models.allowlist.real.json     Real probed allowlist (gitignored)
+router_decisions.jsonl         Real request log (gitignored)
 
-```text
-/Users/robinsverd/.local/bin/claude-router
-/Users/robinsverd/.local/bin/claude-routerv1
-/Users/robinsverd/.local/bin/claude-router-v1
-/Users/robinsverd/.local/bin/claude-routerv2
-/Users/robinsverd/.local/bin/claude-routerv3
-/Users/robinsverd/.local/bin/claude-routerv4
+README.md                      This file
+HANDOVER.md                    Operator handover (secrets scrubbed)
+VERSION-1.md … VERSION-4.md    Per-version design notes
+STARTUP-COST-ANALYSIS.md       Token-cost analysis of Claude Code startup
+start-here.html                Clickable local map
 ```
 
-## Fast Offline Test
+### Secrets
 
-This does not touch the real FreeLLMAPI. It uses a mock backend.
+All secrets live in `.env` (gitignored). See `.env.example` for the full list:
+
+- `FREE_LLM_API_TOKEN` — your FreeLLMAPI unified key
+- `FREE_LLM_API_BASE` — upstream base URL
+- `CLAUDE_ROUTER_PORT`, `CLAUDE_ROUTER_MODE`
+
+The launcher fetches the key over SSH if `.env` is empty:
 
 ```bash
-cd /Users/robinsverd/Thrivbe-AI/lab/freellm-router-mvp
-python3 freellm_router_mvp.py smoke
+ssh -o ClearAllForwardings=yes freellmapi-tunnel \
+  "sqlite3 /opt/freellmapi/data/freeapi.db \"select value from settings where key='unified_api_key';\""
 ```
 
-Expected:
+---
 
-```text
-Compatible models: free-code-tools
-Smoke test passed.
-```
+## Current Allowlisted Models
 
-## Real Probe
+Probed against a live FreeLLMAPI instance. "Compatible" means: basic chat works, tool-call shape works, and context window is large enough for Claude Code startup/tool prompts.
 
-FreeLLMAPI is reachable at:
+| Model | Tools | Context | Roles |
+|-------|:-----:|--------:|-------|
+| `gpt-oss-120b` | ✅ | 131072 | coding, tool_use, summarization |
+| `gpt-oss-20b` | ✅ | 131072 | coding, tool_use, summarization |
+| `llama-3.3-70b` | ✅ | 131072 | coding, tool_use, summarization |
+| `gpt-4.1` | ✅ | 128000 | coding, tool_use, summarization |
+| `qwen/qwen3-coder:free` | ❌ | 8192 | coding, summarization |
+| `gemini-2.5-flash` | ❌ | 1048576 | summarization |
 
-```text
-http://127.0.0.1:3004/v1
-```
+FreeLLMAPI can still route/fallback underneath, so the requested model and the actual provider/model may differ.
 
-Regenerate the real allowlist:
+---
+
+## Testing
 
 ```bash
-cd /Users/robinsverd/Thrivbe-AI/lab/freellm-router-mvp
-./probe_real_freellmapi.sh
+# Syntax check
+python3 -m py_compile freellm_router_mvp.py
+bash -n probe_real_freellmapi.sh run_real_proxy.sh
+
+# Smoke test each version
+for v in v1 v2 v3 v4; do
+  claude-router$v -p "Say ROUTER_${v}_TEST_OK and nothing else." --output-format text
+done
+
+# Stress test v4 (auto mode)
+python3 experiment_harness.py --requests 50
+
+# Direct v4 route proof
+curl -sS -D /tmp/h.headers http://127.0.0.1:8792/v1/messages \
+  -H 'content-type: application/json' \
+  -d '{"model":"gpt-oss-120b","max_tokens":30,"messages":[{"role":"user","content":"Compare tradeoffs."}]}' \
+  > /dev/null
+grep -i 'x-router-selected-version' /tmp/h.headers   # → v3
 ```
 
-The scripts fetch the unified FreeLLMAPI key from the server database over `freellmapi-tunnel` unless `FREE_LLM_API_TOKEN` is already set.
+---
 
 ## Troubleshooting
 
 ### `No module named 'encodings'`
 
-If a router command fails with:
-
-```text
-Fatal Python error: Failed to import encodings module
-ModuleNotFoundError: No module named 'encodings'
-```
-
-that usually means the shell has a broken `PYTHONHOME`, `PYTHONPATH`, or `PYTHONEXECUTABLE`.
-
-The launcher now starts the router proxy with those variables removed, and defaults to `/usr/bin/python3` when available. To force another Python:
+A broken `PYTHONHOME` / `PYTHONPATH` / `PYTHONEXECUTABLE` leaking into router startup. The launcher unsets these. Override Python if needed:
 
 ```bash
-CLAUDE_ROUTER_PYTHON=/path/to/python3 claude-routerv2
+CLAUDE_ROUTER_PYTHON=/path/to/python3 claude-routerv4
 ```
 
-## Router Versions
+### `Address already in use`
 
-### v2: Task-Aware Router
-
-Command:
+Another process holds the port. v2 uses 8791 and v4 uses 8792 because 8788/8790 were taken by node processes. Check listeners:
 
 ```bash
-claude-routerv2
+lsof -nP -iTCP:8792 -sTCP:LISTEN
 ```
 
-Behavior:
+### `All models exhausted` (429)
 
-```text
-classify request -> choose policy -> choose one model from policy pool
+Upstream FreeLLMAPI rate limits hit. The storm-hardened fallback handles this by racing all models and failing fast. For sustained load you need higher-limit (paid) API keys in your FreeLLMAPI DB.
+
+### Broken pipe (`[Errno 32]`)
+
+Client (Claude Code) closed the connection before the proxy finished. Caused by old same-model retry loops holding connections 30–70s. The parallel-race fallback eliminates this.
+
+---
+
+## Design Notes
+
+**Router-R1** (a learned decision model) is the planned future layer but is not yet integrated. Current routing is deterministic Python logic in `choose_model`, `classify_v2_policy`, `classify_v4_route`. The safe insertion point:
+
+```
+request
+  -> hard compatibility filter  (eligible models only)
+    -> Router-R1 chooses model or routing strategy
 ```
 
-Example policies:
+Router-R1 should only ever see models that passed compatibility checks for the current request — never the raw FreeLLMAPI model list.
 
-```text
-coding
-fast
-long-context
-cheap
-review
-```
+---
 
-### v3: Ensemble Router
+## Recommended Next Steps
 
-Command:
+1. Automated integration test script running v1–v4 checks in one command
+2. Small Python supervisor for start/stop/status (replacing bash + PID files)
+3. JSONL route logs for historical inspection (already in `router_decisions.jsonl`)
+4. Router-R1 decision layer once the deterministic router is stable
+5. Browser UI page showing live status + recent decisions (the dashboard already does this)
 
-```bash
-claude-routerv3
-```
+---
 
-Behavior:
+## License
 
-```text
-classify request
-  -> ask multiple FreeLLMAPI models
-  -> aggregate/critique/synthesize
-  -> return one final answer to Claude
-```
-
-For Claude Code safety, only one model should drive tool calls. Other models should act as advisors/critics.
-
-Current v3 behavior:
-
-```text
-text-only request
-  -> multiple advisor models
-  -> aggregator model
-  -> one final response
-
-tool-bearing request
-  -> safe v2 single-model route
-```
-
-### v4: Meta-Router
-
-Command:
-
-```bash
-claude-routerv4
-```
-
-Behavior:
-
-```text
-classify request
-  -> choose v1, v2, or v3
-  -> run the chosen router strategy
-  -> return one final response to Claude
-```
-
-Current v4 choices:
-
-```text
-simple short request -> v1
-coding/review/tools/long-context -> v2
-strategy/comparison/synthesis text-only request -> v3
-```
-
-Details: [VERSION-4.md](./VERSION-4.md)
-
-## Router-R1
-
-Router-R1 can eventually replace the deterministic `choose_model(...)` decision step.
-
-Safe insertion point:
-
-```text
-hard compatibility filter
-  -> eligible models only
-    -> Router-R1 chooses from eligible set
-```
-
-Router-R1 should not choose from the raw FreeLLMAPI model list. It should only see models that passed compatibility checks for the current request.
+This project builds on [`musistudio/claude-code-router`](https://github.com/musistudio/claude-code-router) and the [`karpathy/autoresearch`](https://github.com/karpathy/autoresearch) pattern. See file headers for individual attribution. Provide credit to the upstream projects when forking.

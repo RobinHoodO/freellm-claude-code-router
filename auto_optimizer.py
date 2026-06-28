@@ -91,7 +91,7 @@ def send_post(payload: dict) -> tuple[int, dict, dict, float]:
 def restart_v2():
     print("[Optimizer] Restarting V2 Proxy server...")
     subprocess.run("ps aux | grep freellm_router_mvp.py | grep -v grep | awk '{print $2}' | xargs kill -9 || true", shell=True)
-    subprocess.run("/Users/robinsverd/.local/bin/claude-router --mode v2 --start-proxy", shell=True)
+    subprocess.run("claude-router --mode v2 --start-proxy", shell=True)
     time.sleep(2)
 
 def get_current_policies() -> dict:

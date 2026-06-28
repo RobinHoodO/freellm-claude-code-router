@@ -1,0 +1,31 @@
+# ─── Secrets & local config ──────────────────────────────────────────────────
+.env
+.env.local
+freellmapi-key.txt
+api_key.txt
+*.key
+
+# ─── Real runtime data (contains real request logs / model probe results) ─────
+router_decisions.jsonl
+models.allowlist.real.json
+*.real.json
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# ─── Local logs / pid files ───────────────────────────────────────────────────
+*.log
+*.pid
+/tmp/claude-router-*
+
+# ─── OS / editor ──────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

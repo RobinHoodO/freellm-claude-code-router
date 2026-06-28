@@ -22,6 +22,7 @@ import argparse
 import contextlib
 import dataclasses
 import http.client
+import concurrent.futures
 import json
 import os
 import re
@@ -56,11 +57,11 @@ def log_decision(entry: dict[str, Any]) -> None:
 
 V2_POLICIES = {
     "long-context": [
-        "llama-3.3-70b",
         "gpt-oss-120b",
         "gpt-4.1",
         "qwen/qwen3-coder:free",
         "gemini-2.5-flash",
+        "llama-3.3-70b",
     ],
     "coding": [
         "gpt-oss-120b",
@@ -70,9 +71,9 @@ V2_POLICIES = {
         "qwen/qwen3-coder:free",
     ],
     "review": [
-        "gpt-oss-120b",
         "llama-3.3-70b",
         "gpt-4.1",
+        "gpt-oss-120b",
     ],
     "summarization": [
         "gpt-oss-20b",
@@ -266,26 +267,25 @@ def prune_unused_tools(tools: list[dict[str, Any]], request_text: str) -> list[d
             pruned_tools.append(tool)
             continue
             
-        # Specific filters
-        if "mcp__cal__" in name:
-            if any(kw in text_lower for kw in ["cal.com", "calendar", "schedule", "meeting", "event", "booking"]):
-                pruned_tools.append(tool)
-            continue
-            
-        if "mcp__stripe__" in name:
-            if any(kw in text_lower for kw in ["stripe", "payment", "refund", "invoice", "billing"]):
-                pruned_tools.append(tool)
-            continue
-            
-        if "mcp__supabase__" in name:
-            if any(kw in text_lower for kw in ["supabase", "database", "migration", "sql", "table"]):
-                pruned_tools.append(tool)
-            continue
-            
-        if "mcp__apify__" in name:
-            if any(kw in text_lower for kw in ["apify", "actor", "scrape"]):
-                pruned_tools.append(tool)
-            continue
+        # Specific check for third-party MCP integration tools to prevent payload bloat
+        if name.startswith("mcp__"):
+            parts = name.split("__")
+            if len(parts) >= 2:
+                provider = parts[1]
+                if provider not in {"obsidian", "gitnexus", "context7"}:
+                    kw_map = {
+                        "cal": ["cal.com", "calendar", "booking"],
+                        "stripe": ["stripe", "payment", "refund"],
+                        "supabase": ["supabase"],
+                        "apify": ["apify"],
+                        "beeper": ["beeper"],
+                        "blotato": ["blotato", "pinterest"],
+                        "twenty": ["twenty", "crm"]
+                    }
+                    kws = kw_map.get(provider, [provider])
+                    if not any(kw in text_lower for kw in kws):
+                        # Prune it since it is not requested in the prompt
+                        continue
             
         # General size filter for non-core tools: if serialized size is > 15,000 characters
         # and none of its name parts are in the prompt, we prune it.
@@ -345,7 +345,7 @@ def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str
         "model": model,
         "messages": openai_messages,
         "temperature": request.get("temperature", 0.2),
-        "max_tokens": request.get("max_tokens", 512),
+        "max_tokens": min(request.get("max_tokens", 4096), 4096) if request.get("max_tokens") is not None else 4096,
         "stream": False,
     }
     tools = request.get("tools")
@@ -355,16 +355,21 @@ def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str
             if msg.get("role") == "user":
                 content = msg.get("content")
                 if isinstance(content, str):
-                    user_texts.append(content)
+                    if "system-reminder" not in content.lower()[:50]:
+                        user_texts.append(content)
                 elif isinstance(content, list):
                     for chunk in content:
                         if isinstance(chunk, dict) and chunk.get("type") == "text":
-                            user_texts.append(chunk.get("text", ""))
+                            text_val = chunk.get("text", "")
+                            if "system-reminder" not in text_val.lower()[:50]:
+                                user_texts.append(text_val)
         request_text = " ".join(user_texts)
+        print(f"[DEBUG] prune_unused_tools: request_text length={len(request_text)} content={repr(request_text[:200])}", file=sys.stderr)
         pruned_tools_list = prune_unused_tools(tools, request_text)
 
-        payload["tools"] = [
-            {
+        payload["tools"] = []
+        for tool in pruned_tools_list:
+            mapped_tool = {
                 "type": "function",
                 "function": {
                     "name": tool.get("name", "tool"),
@@ -372,8 +377,9 @@ def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str
                     "parameters": clean_and_truncate_schema(sanitize_tool_parameters(tool.get("input_schema", {"type": "object", "properties": {}}))),
                 },
             }
-            for tool in pruned_tools_list
-        ]
+            print(f"[DEBUG] Tool: {tool.get('name')}, original: {len(json.dumps(tool))} chars, truncated: {len(json.dumps(mapped_tool))} chars", file=sys.stderr)
+            payload["tools"].append(mapped_tool)
+            
         with open("/tmp/last_tools_payload.json", "w") as f:
             json.dump(payload["tools"], f, indent=2)
         tools_str = json.dumps(payload["tools"])
@@ -626,37 +632,145 @@ def ordered_fallback_models(request: dict[str, Any], capabilities: list[ModelCap
     return ordered
 
 
-def post_with_model_fallback(
-    request: dict[str, Any],
-    capabilities: list[ModelCapability],
-    preferred: ModelCapability,
+# ─── Error classification + parallel race (storm-hardened fallback) ────────────
+#
+# The original fallback loop retried the SAME model 3× on 429 (sleeping 2s, 4s)
+# and retried 4×/3× on deterministic 401/400 errors, producing 30–70s failure
+# chains and broken pipes. These helpers classify errors so we:
+#   • fail-fast on non-retryable auth/catalog errors (401/400/403/404/invalid key)
+#   • never retry the same model on 429 (free-tier cooldown is model-wide; another
+#     attempt seconds later still fails)
+#   • race all eligible models in parallel on the first attempt so the winner is
+#     the fastest healthy model and total latency ~= one round trip, not N×timeout.
+
+_NONRETRYABLE_SUBSTRINGS = (
+    "401", "authentication", "invalid api key", "invalid_api_key",
+    "unauthorized", "forbidden", "403", "model_not_found", "not in the catalog",
+    "400", "invalid_request", "bad request",
+)
+_RATELIMIT_SUBSTRINGS = (
+    "429", "rate limit", "exhausted", "too many requests", "rate_limit",
+)
+
+
+def classify_upstream_error(exc_str: str) -> str:
+    """Return one of: 'rate_limit', 'nonretryable', 'transient'."""
+    low = (exc_str or "").lower()
+    if any(kw in low for kw in _RATELIMIT_SUBSTRINGS):
+        return "rate_limit"
+    if any(kw in low for kw in _NONRETRYABLE_SUBSTRINGS):
+        return "nonretryable"
+    return "transient"
+
+
+def _attempt_one_model(
+    candidate: ModelCapability,
+    payload: dict[str, Any],
     api_base: str,
     api_token: str | None,
+    timeout: float = 12.0,
+) -> tuple[ModelCapability, dict[str, Any] | None, str | None]:
+    """Single attempt against one model. Returns (model, response, error_kind).
+
+    On success response is set and error_kind is None.
+    On failure response is None and error_kind is classify_upstream_error(exc_str).
+    """
+    try:
+        response = http_json(
+            "POST",
+            join_v1_url(api_base, "/v1/chat/completions"),
+            payload,
+            api_token,
+            timeout=timeout,
+        )
+        return candidate, response, None
+    except Exception as exc:
+        return candidate, None, classify_upstream_error(str(exc))
+
+
+def race_models_for_first_success(
+    request: dict[str, Any],
+    candidates: list[ModelCapability],
+    api_base: str,
+    api_token: str | None,
+    parallel: bool = True,
 ) -> tuple[dict[str, Any], ModelCapability, str]:
+    """Storm-hardened fallback.
+
+    Strategy:
+      1. Build one payload per candidate model.
+      2. FIRST pass: race all candidates in parallel (or walk sequentially if
+         parallel=False). First 200 wins. Non-retryable errors mark a model dead
+         instantly; rate-limit errors mark the model dead (no same-model retry).
+      3. If the whole first pass is rate-limited, do ONE short global backoff
+         (2s) and race the surviving models again — at most once.
+      4. If still nothing, raise RuntimeError with a compact failure summary.
+
+    This keeps the happy path at one round-trip and turns a 401/429 storm from a
+    30–70s hang into ~one failed round trip (seconds), eliminating broken pipes.
+    """
+    if not candidates:
+        raise RuntimeError("No compatible fallback models available for this request.")
+
     failures: list[str] = []
-    for candidate in ordered_fallback_models(request, capabilities, preferred):
-        upstream_payload = anthropic_to_openai_payload(request, candidate.model)
-        max_retries = 3
-        for attempt in range(1, max_retries + 1):
-            try:
-                response = http_json(
-                    "POST",
-                    join_v1_url(api_base, "/v1/chat/completions"),
-                    upstream_payload,
-                    api_token,
-                )
-                return response, candidate, "; ".join(failures)
-            except Exception as exc:
-                exc_str = str(exc)
-                is_rate_limit = any(kw in exc_str.lower() for kw in ["429", "rate limit", "exhausted", "too many requests"])
-                if is_rate_limit and attempt < max_retries:
-                    delay = attempt * 2
-                    print(f"[WARNING] Model {candidate.model} rate-limited on attempt {attempt}/{max_retries}. Retrying in {delay}s...", file=sys.stderr)
-                    time.sleep(delay)
-                else:
-                    failures.append(f"{candidate.model} (attempt {attempt}): {exc}")
-                    break
+
+    def run_pass(alive: list[ModelCapability]) -> tuple[dict[str, Any], ModelCapability, list[str]] | None:
+        local_failures: list[str] = []
+        payloads = [(c, anthropic_to_openai_payload(request, c.model)) for c in alive]
+        if parallel and len(alive) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(alive))) as ex:
+                futures = {ex.submit(_attempt_one_model, c, p, api_base, api_token): c
+                           for c, p in payloads}
+                for fut in concurrent.futures.as_completed(futures):
+                    cand, response, err_kind = fut.result()
+                    if response is not None:
+                        return response, cand, local_failures
+                    note = f"{cand.model}: {err_kind}"
+                    local_failures.append(note)
+        else:
+            for cand, payload in payloads:
+                c, response, err_kind = _attempt_one_model(cand, payload, api_base, api_token)
+                if response is not None:
+                    return response, c, local_failures
+                local_failures.append(f"{cand.model}: {err_kind}")
+        return None
+
+    alive = list(candidates)
+    result = run_pass(alive)
+    if result is not None:
+        response, winner, local_failures = result
+        failures.extend(local_failures)
+        return response, winner, "; ".join(failures)
+
+    # All models failed first pass. If it was rate-limits, one short global backoff
+    # and one retry of the whole set; otherwise fail immediately.
+    if all("rate_limit" in f for f in failures):
+        time.sleep(2.0)
+        result = run_pass(alive)
+        if result is not None:
+            response, winner, local_failures = result
+            failures.extend(local_failures)
+            return response, winner, "; ".join(failures)
+
     raise RuntimeError("All compatible fallback models failed: " + " | ".join(failures))
+
+
+def post_with_model_fallback(
+                request: dict[str, Any],
+                capabilities: list[ModelCapability],
+                preferred: ModelCapability,
+                api_base: str,
+                api_token: str | None,
+) -> tuple[dict[str, Any], ModelCapability, str]:
+                """Storm-hardened: race all eligible models in parallel, first 200 wins.
+
+                Replaces the old sequential 3×-per-model retry loop. On a healthy upstream
+                this is one round trip; on a 429/401 storm this fails in one round trip
+                instead of burning 30–70s of same-model retries.
+                """
+                candidates = ordered_fallback_models(request, capabilities, preferred)
+                return race_models_for_first_success(request, candidates, api_base, api_token, parallel=True)
+
 
 
 
@@ -712,7 +826,10 @@ def run_v3_ensemble(request: dict[str, Any], capabilities: list[ModelCapability]
     original_text = extract_text_from_anthropic_messages(request.get("messages", []))
     advisor_outputs: list[tuple[str, str]] = []
 
-    for advisor in advisors:
+    # Parallelize advisor gathering so v3 latency = max(advisors), not sum.
+    # Each advisor gets a tight 12s timeout; failures are skipped (ensemble
+    # degrades to fewer advisors rather than failing).
+    def _gather(advisor: ModelCapability) -> tuple[str, str] | None:
         advisor_request = dict(request)
         advisor_request["max_tokens"] = min(int(request.get("max_tokens", 512)), 256)
         advisor_payload = anthropic_to_openai_payload(advisor_request, advisor.model)
@@ -732,10 +849,21 @@ def run_v3_ensemble(request: dict[str, Any], capabilities: list[ModelCapability]
                 join_v1_url(api_base, "/v1/chat/completions"),
                 advisor_payload,
                 api_token,
+                timeout=12.0,
             )
-            advisor_outputs.append((advisor.model, text_from_openai_response(advisor_response)))
+            return (advisor.model, text_from_openai_response(advisor_response))
         except Exception:
-            continue
+            return None
+
+    if len(advisors) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(advisors))) as ex:
+            for res in ex.map(_gather, advisors):
+                if res is not None:
+                    advisor_outputs.append(res)
+    else:
+        res = _gather(advisors[0])
+        if res is not None:
+            advisor_outputs.append(res)
 
     if not advisor_outputs:
         fallback_response, fallback_model, _fallback_notes = post_with_model_fallback(
@@ -1511,57 +1639,64 @@ def post_stream_with_model_fallback(
     api_token: str | None,
     handler: BaseHTTPRequestHandler,
 ) -> tuple[ModelCapability, str]:
+    """Storm-hardened streaming fallback.
+
+    Streaming can't race across models (headers are already committed once the
+    first byte is written), so we walk candidates sequentially but FAIL FAST:
+    no same-model retry on 429, no retries at all on 401/400/non-retryable, and
+    a short 12s per-attempt timeout. On a healthy upstream this is one round
+    trip; on a storm it fails in one pass per model instead of 3× with sleeps.
+    """
     failures: list[str] = []
+    parsed = urllib.parse.urlparse(api_base)
+    conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    base_path = parsed.path or "/"
+    if base_path.endswith("/"):
+        base_path = base_path[:-1]
+    target_path = base_path + "/chat/completions"
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
     for candidate in ordered_fallback_models(request, capabilities, preferred):
         upstream_payload = anthropic_to_openai_payload(request, candidate.model)
         upstream_payload["stream"] = True
-        
-        max_retries = 3
-        for attempt in range(1, max_retries + 1):
-            try:
-                parsed = urllib.parse.urlparse(api_base)
-                conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-                conn = conn_cls(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=30)
-                
-                path = parsed.path or "/"
-                if path.endswith("/"):
-                    path = path[:-1]
-                path += "/chat/completions"
-                
-                headers = {"content-type": "application/json"}
-                if api_token:
-                    headers["authorization"] = f"Bearer {api_token}"
-                
-                conn.request("POST", path, body=json.dumps(upstream_payload).encode("utf-8"), headers=headers)
-                response = conn.getresponse()
-                
-                if response.status != 200:
-                    resp_body = response.read()
-                    err_msg = f"HTTP {response.status}: {resp_body}"
-                    conn.close()
-                    raise RuntimeError(err_msg)
-                
-                handler.send_response(200)
-                handler.send_header("content-type", "text/event-stream")
-                handler.send_header("cache-control", "no-cache")
-                handler.send_header("connection", "close")
-                handler.end_headers()
-                handler.close_connection = True
-                
-                stream_openai_to_anthropic(response, handler, candidate.model)
+        headers = {"content-type": "application/json"}
+        if api_token:
+            headers["authorization"] = f"Bearer {api_token}"
+
+        try:
+            conn = conn_cls(host, port, timeout=15)
+            conn.request("POST", target_path, body=json.dumps(upstream_payload).encode("utf-8"), headers=headers)
+            response = conn.getresponse()
+
+            if response.status != 200:
+                resp_body = response.read()
                 conn.close()
-                return candidate, "; ".join(failures)
-                
-            except Exception as exc:
-                exc_str = str(exc)
-                is_rate_limit = any(kw in exc_str.lower() for kw in ["429", "rate limit", "exhausted", "too many requests"])
-                if is_rate_limit and attempt < max_retries:
-                    delay = attempt * 2
-                    print(f"[WARNING] Streaming model {candidate.model} rate-limited on attempt {attempt}/{max_retries}. Retrying in {delay}s...", file=sys.stderr)
-                    time.sleep(delay)
-                else:
-                    failures.append(f"{candidate.model} (attempt {attempt}): {exc}")
-                    break
+                err_kind = classify_upstream_error(f"HTTP {response.status}: {resp_body}")
+                failures.append(f"{candidate.model}: {err_kind}")
+                # non-retryable (401/400/404) or rate-limit: skip to next model, no same-model retry
+                continue
+
+            handler.send_response(200)
+            handler.send_header("content-type", "text/event-stream")
+            handler.send_header("cache-control", "no-cache")
+            handler.send_header("connection", "close")
+            handler.end_headers()
+            handler.close_connection = True
+
+            stream_openai_to_anthropic(response, handler, candidate.model)
+            conn.close()
+            return candidate, "; ".join(failures)
+
+        except Exception as exc:
+            err_kind = classify_upstream_error(str(exc))
+            failures.append(f"{candidate.model}: {err_kind}")
+            try:
+                conn.close()
+            except Exception:
+                pass
+            continue
+
     raise RuntimeError("All compatible fallback models failed: " + " | ".join(failures))
 
 
@@ -1668,6 +1803,10 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
         effective_mode = self.mode
         route_reason = ""
         request = {}
+        api_token = self.api_token
+        auth_header = self.headers.get("authorization")
+        if not api_token and auth_header and auth_header.lower().startswith("bearer "):
+            api_token = auth_header[7:]
         try:
             request = read_json_body(self)
             capabilities = load_allowlist(self.allowlist_path)
@@ -1679,7 +1818,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
                     request,
                     capabilities,
                     self.api_base,
-                    self.api_token,
+                    api_token,
                 )
                 latency_ms = int((time.time() - start_time) * 1000)
                 
@@ -1722,7 +1861,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
                     capabilities,
                     selected,
                     self.api_base,
-                    self.api_token,
+                    api_token,
                     self,
                 )
                 latency_ms = int((time.time() - start_time) * 1000)
@@ -1745,7 +1884,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
                 capabilities,
                 selected,
                 self.api_base,
-                self.api_token,
+                api_token,
             )
             anthropic_response = openai_to_anthropic_response(upstream_response, final_model.model)
             latency_ms = int((time.time() - start_time) * 1000)

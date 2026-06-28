@@ -1,19 +1,43 @@
 # FreeLLM Claude Router Handover
 
-Last updated: 2026-06-28
+Last updated: 2026-06-28 (Updated at 11:45 AM)
+
+---
+
+## 🚀 Recent Resolution (June 28, 11:45 AM)
+
+We recently resolved three critical issues that were causing the router to fail during testing:
+
+### 1. Tool Bloat & Context Length Limit Exceeded
+* **Issue**: Prompt + tools payload exceeded context length limits (estimating up to 178k input tokens).
+* **Cause**: Claude Code injects rules and workspace skills under a `<system-reminder>` header in a `"role": "user"` block. The proxy's tool-pruner matched integration keywords within this block, attaching Cal, Stripe, Supabase, Apify, Beeper, Blotato, and Twenty MCP tools to every request.
+* **Resolution**: Updated `freellm_router_mvp.py` to filter out `<system-reminder>` blocks before evaluating tools.
+* **Result**: Tools payload shrank by **91.5%** (from 324k to 27k characters), fitting easily.
+
+### 2. Stale SSH Tunnel (502 Bad Gateway)
+* **Issue**: Requests timed out or returned HTTP 502.
+* **Cause**: A stale background SSH tunnel process (from Wednesday) was holding local port `3004`, failing to forward traffic to remote port `3001` (FreeLLMAPI).
+* **Resolution**: Terminated the stale SSH process. A healthy tunnel was automatically re-established.
+
+### 3. Invalid API Key / 401 Unauthorized
+* **Issue**: Upstream FreeLLMAPI returned `HTTP 401: Invalid API key`.
+* **Cause**: The local proxy was not configured with the unified key and forwarded the client's `local-dev-token` to the remote server.
+* **Resolution**: Retrieved the real unified API key from the remote SQLite database and updated the proxy request handler in `freellm_router_mvp.py` to extract bearer tokens safely. Restarted the local proxy with `--api-token` (read from `.env` — see `.env.example`).
+
+---
 
 ## Project Location
 
 Authoritative working folder:
 
 ```text
-/Users/robinsverd/Thrivbe-AI/lab/freellm-router-mvp
+<repo-root>
 ```
 
 Do not use the older Codex output copy under:
 
 ```text
-/Users/robinsverd/Documents/Codex/2026-06-26/this/outputs/freellm-router-mvp
+<stale codex copy (deleted)>
 ```
 
 That location is stale.
@@ -115,14 +139,14 @@ run_real_proxy.sh             manual proxy runner
 Installed command wrappers:
 
 ```text
-/Users/robinsverd/.local/bin/claude-router
-/Users/robinsverd/.local/bin/claude-routerv1
-/Users/robinsverd/.local/bin/claude-routerv2
-/Users/robinsverd/.local/bin/claude-routerv3
-/Users/robinsverd/.local/bin/claude-routerv4
+~/.local/bin/claude-router
+~/.local/bin/claude-routerv1
+~/.local/bin/claude-routerv2
+~/.local/bin/claude-routerv3
+~/.local/bin/claude-routerv4
 ```
 
-The small version wrappers set `CLAUDE_ROUTER_MODE` and delegate to `/Users/robinsverd/.local/bin/claude-router`.
+The small version wrappers set `CLAUDE_ROUTER_MODE` and delegate to `~/.local/bin/claude-router`.
 
 ## Ports
 
@@ -320,9 +344,9 @@ FreeLLMAPI can still route/fallback underneath, so the requested model and actua
 First verify syntax:
 
 ```bash
-cd /Users/robinsverd/Thrivbe-AI/lab/freellm-router-mvp
+cd <repo-root>
 python3 -m py_compile freellm_router_mvp.py
-bash -n /Users/robinsverd/.local/bin/claude-router probe_real_freellmapi.sh run_real_proxy.sh
+bash -n ~/.local/bin/claude-router probe_real_freellmapi.sh run_real_proxy.sh
 ```
 
 Check commands resolve:
