@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-06-26T00:00:00Z",
+  "models": [
+    {
+      "model": "example-free-code-tools",
+      "claudeCodeCompatible": true,
+      "supportsTools": true,
+      "supportsStreaming": false,
+      "contextWindow": 32768,
+      "roles": ["coding", "tool_use", "summarization"],
+      "notes": "Example model that can safely receive Claude Code-style tool requests."
+    },
+    {
+      "model": "example-free-summary-only",
+      "claudeCodeCompatible": false,
+      "supportsTools": false,
+      "supportsStreaming": false,
+      "contextWindow": 8192,
+      "roles": ["summarization"],
+      "notes": "Useful for cheap tasks, but excluded from Claude Code tool requests."
+    }
+  ]
+}

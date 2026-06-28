@@ -1,0 +1,106 @@
+{
+  "generatedAt": "2026-06-26T16:09:15Z",
+  "models": [
+    {
+      "model": "qwen/qwen3-coder:free",
+      "claudeCodeCompatible": true,
+      "supportsTools": true,
+      "supportsStreaming": false,
+      "contextWindow": 1048576,
+      "roles": [
+        "coding",
+        "summarization",
+        "tool_use"
+      ],
+      "notes": ""
+    },
+    {
+      "model": "gemini-2.5-flash",
+      "claudeCodeCompatible": true,
+      "supportsTools": true,
+      "supportsStreaming": false,
+      "contextWindow": 1048576,
+      "roles": [
+        "coding",
+        "tool_use",
+        "summarization"
+      ],
+      "notes": ""
+    },
+    {
+      "model": "z-ai/glm-4.5-air:free",
+      "claudeCodeCompatible": true,
+      "supportsTools": true,
+      "supportsStreaming": false,
+      "contextWindow": 131072,
+      "roles": [
+        "coding",
+        "tool_use",
+        "summarization"
+      ],
+      "notes": ""
+    },
+    {
+      "model": "codestral-latest",
+      "claudeCodeCompatible": false,
+      "supportsTools": false,
+      "supportsStreaming": false,
+      "contextWindow": 256000,
+      "roles": [
+        "coding",
+        "summarization"
+      ],
+      "notes": ""
+    },
+    {
+      "model": "qwen/qwen3-next-80b-a3b-instruct:free",
+      "claudeCodeCompatible": false,
+      "supportsTools": false,
+      "supportsStreaming": false,
+      "contextWindow": 262144,
+      "roles": [
+        "summarization"
+      ],
+      "notes": ""
+    },
+    {
+      "model": "openai/gpt-oss-120b:free",
+      "claudeCodeCompatible": true,
+      "supportsTools": true,
+      "supportsStreaming": false,
+      "contextWindow": 131072,
+      "roles": [
+        "coding",
+        "tool_use",
+        "summarization"
+      ],
+      "notes": ""
+    },
+    {
+      "model": "openai/gpt-oss-20b:free",
+      "claudeCodeCompatible": true,
+      "supportsTools": true,
+      "supportsStreaming": false,
+      "contextWindow": 131072,
+      "roles": [
+        "coding",
+        "tool_use",
+        "summarization"
+      ],
+      "notes": ""
+    },
+    {
+      "model": "llama-3.3-70b-versatile",
+      "claudeCodeCompatible": true,
+      "supportsTools": true,
+      "supportsStreaming": false,
+      "contextWindow": 131072,
+      "roles": [
+        "coding",
+        "tool_use",
+        "summarization"
+      ],
+      "notes": ""
+    }
+  ]
+}

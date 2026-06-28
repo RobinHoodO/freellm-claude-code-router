@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FreeLLM Router MVP</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f7f4;
+        --panel: #ffffff;
+        --text: #1d1f24;
+        --muted: #646a73;
+        --line: #d8d9d2;
+        --accent: #166f63;
+        --accent-soft: #e7f2ee;
+        --code: #f0f1eb;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #121417;
+          --panel: #1a1d21;
+          --text: #f1f3f4;
+          --muted: #a7adb5;
+          --line: #31363d;
+          --accent: #61c7b5;
+          --accent-soft: #153530;
+          --code: #23282d;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.5;
+      }
+
+      main {
+        width: min(1040px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 40px 0 56px;
+      }
+
+      header {
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 24px;
+        margin-bottom: 24px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 32px;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin: 0 0 12px;
+        font-size: 18px;
+        letter-spacing: 0;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 14px;
+        margin: 18px 0 28px;
+      }
+
+      .card {
+        display: flex;
+        flex-direction: column;
+        min-height: 150px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      .card p {
+        margin-bottom: 16px;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: auto;
+      }
+
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 0 12px;
+        border: 1px solid var(--accent);
+        border-radius: 7px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 650;
+        text-decoration: none;
+      }
+
+      a.button.secondary {
+        border-color: var(--line);
+        background: transparent;
+        color: var(--text);
+      }
+
+      code,
+      pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+
+      pre {
+        overflow-x: auto;
+        margin: 12px 0 0;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--code);
+      }
+
+      section {
+        margin-top: 26px;
+      }
+
+      .note {
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>FreeLLM Router MVP</h1>
+        <p>Clickable map for the local Claude-Code-style router experiment.</p>
+      </header>
+
+      <section>
+        <h2>Router Versions</h2>
+        <div class="grid">
+          <article class="card">
+            <h2>Version 1</h2>
+            <p>Working baseline: one selected model request, with FreeLLMAPI fallback underneath.</p>
+            <div class="actions">
+              <a class="button" href="./VERSION-1.md">Read v1</a>
+              <a class="button secondary" href="file:///Users/robinsverd/.local/bin/claude-routerv1">Command</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Version 2</h2>
+            <p>Working: task-aware policy router for coding, fast, long-context, and review modes.</p>
+            <div class="actions">
+              <a class="button" href="./VERSION-2.md">Read v2</a>
+              <a class="button secondary" href="file:///Users/robinsverd/.local/bin/claude-routerv2">Command</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Version 3</h2>
+            <p>Working: multi-model ensemble for text-only requests, with safe fallback for tool requests.</p>
+            <div class="actions">
+              <a class="button" href="./VERSION-3.md">Read v3</a>
+              <a class="button secondary" href="file:///Users/robinsverd/.local/bin/claude-routerv3">Command</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Version 4</h2>
+            <p>Working: meta-router that chooses v1, v2, or v3 depending on the request.</p>
+            <div class="actions">
+              <a class="button" href="./VERSION-4.md">Read v4</a>
+              <a class="button secondary" href="file:///Users/robinsverd/.local/bin/claude-routerv4">Command</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Live Surfaces</h2>
+        <div class="grid">
+          <article class="card">
+            <h2>FreeLLMAPI Dashboard</h2>
+            <p>The live API and dashboard through the SSH tunnel.</p>
+            <div class="actions">
+              <a class="button" href="http://127.0.0.1:3004/">Open 3004</a>
+              <a class="button secondary" href="http://127.0.0.1:3014/">Open iframe proxy</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Router Proxy</h2>
+            <p>Anthropic-style local proxy. v1 uses 8787; v4 uses 8792.</p>
+            <div class="actions">
+              <a class="button" href="http://127.0.0.1:8787/v1/models">v1 Models</a>
+              <a class="button secondary" href="http://127.0.0.1:8792/v1/models">v4 Models</a>
+              <a class="button secondary" href="http://127.0.0.1:8792/">v4 Root</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>FreeLLMAPI API</h2>
+            <p>OpenAI-compatible model list. Requires the unified key for real API clients.</p>
+            <div class="actions">
+              <a class="button" href="http://127.0.0.1:3004/v1/models">Models</a>
+              <a class="button secondary" href="http://127.0.0.1:3004/health">Health</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Local Files</h2>
+        <div class="grid">
+          <article class="card">
+            <h2>Docs</h2>
+            <p>Read the current setup, test flow, and notes.</p>
+            <div class="actions">
+              <a class="button" href="./README.md">README</a>
+              <a class="button secondary" href="./HANDOVER.md">Handover</a>
+              <a class="button secondary" href="./VERSION-1.md">Version 1</a>
+              <a class="button secondary" href="./VERSION-4.md">Version 4</a>
+              <a class="button secondary" href="./models.allowlist.real.json">Real allowlist</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Scripts</h2>
+            <p>Probe FreeLLMAPI, run the proxy, and launch Claude through the router.</p>
+            <div class="actions">
+              <a class="button" href="./probe_real_freellmapi.sh">Probe script</a>
+              <a class="button secondary" href="./run_real_proxy.sh">Proxy script</a>
+              <a class="button secondary" href="file:///Users/robinsverd/.local/bin/claude-router">claude-router</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Implementation</h2>
+            <p>The single Python MVP with mock API, probe, router, and proxy.</p>
+            <div class="actions">
+              <a class="button" href="./freellm_router_mvp.py">Python file</a>
+              <a class="button secondary" href="./models.allowlist.example.json">Example allowlist</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Research Links</h2>
+        <div class="grid">
+          <article class="card">
+            <h2>Router-R1</h2>
+            <p>The learned routing model this MVP can later use as the decision layer.</p>
+            <div class="actions">
+              <a class="button" href="https://github.com/ulab-uiuc/Router-R1">GitHub</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Claude Code Router</h2>
+            <p>A useful reference for Anthropic-compatible routing gateways.</p>
+            <div class="actions">
+              <a class="button" href="https://github.com/musistudio/claude-code-router">GitHub</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Hacker News</h2>
+            <p>Search current and past HN discussions around routing, Claude Code, and free LLM APIs.</p>
+            <div class="actions">
+              <a class="button" href="https://hn.algolia.com/?q=Claude%20Code%20router">Claude Code router</a>
+              <a class="button secondary" href="https://hn.algolia.com/?q=LLM%20router">LLM router</a>
+              <a class="button secondary" href="https://hn.algolia.com/?q=free%20LLM%20API">Free LLM API</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Model Routing</h2>
+            <p>Search wider web/GitHub surfaces for comparable gateways and routing strategies.</p>
+            <div class="actions">
+              <a class="button" href="https://github.com/search?q=anthropic+compatible+router&type=repositories">GitHub routers</a>
+              <a class="button secondary" href="https://www.google.com/search?q=Anthropic+compatible+LLM+router">Web search</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Commands</h2>
+        <div class="note">
+          <p>Run these from this folder:</p>
+          <pre>claude-router --probe
+claude-router --start-proxy
+claude-router --status
+claude-router
+
+claude-router --stop</pre>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
