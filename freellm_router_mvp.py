@@ -814,8 +814,7 @@ class RouterProxyHandler(BaseHTTPRequestHandler):
     mode = "v1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        if os.environ.get("MVP_VERBOSE"):
-            super().log_message(fmt, *args)
+        super().log_message(fmt, *args)
 
     def do_GET(self) -> None:
         path = urllib.parse.urlparse(self.path).path
