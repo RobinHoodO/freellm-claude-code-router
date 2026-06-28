@@ -57,29 +57,41 @@ def log_decision(entry: dict[str, Any]) -> None:
 
 V2_POLICIES = {
     "long-context": [
-        "gpt-oss-120b",
+        "nemotron-3-super-120b",
+        "mistral-large-3-675b",
+        "kimi-k2.6",
         "gpt-4.1",
-        "qwen/qwen3-coder:free",
-        "gemini-2.5-flash",
+        "gpt-oss-120b",
         "llama-3.3-70b",
     ],
     "coding": [
+        "mistral-large-3-675b",
         "gpt-oss-120b",
-        "llama-3.3-70b",
         "gpt-4.1",
+        "llama-3.3-70b",
         "gpt-oss-20b",
-        "qwen/qwen3-coder:free",
     ],
     "review": [
-        "llama-3.3-70b",
+        "mistral-large-3-675b",
+        "kimi-k2.6",
+        "command-a-reasoning",
         "gpt-4.1",
+        "llama-3.3-70b",
         "gpt-oss-120b",
     ],
     "summarization": [
+        "mistral-large-3-675b",
+        "nemotron-3-super-120b",
+        "kimi-k2.6",
+        "gpt-oss-120b",
         "gpt-oss-20b",
         "llama-3.3-70b",
-        "gpt-4.1",
-        "gemini-2.5-flash",
+    ],
+    "reasoning": [
+        "command-a-reasoning",
+        "mistral-large-3-675b",
+        "kimi-k2.6",
+        "nemotron-3-super-120b",
     ],
     "fast": [
         "llama-3.3-70b",
@@ -532,6 +544,8 @@ def classify_v2_policy(request: dict[str, Any]) -> str:
 
     if tokens > 60000:
         return "long-context"
+    if has_any_word(text, ["reason", "reasoning", "think", "think step", "step by step", "analyze", "analyse", "strategy", "architect", "design pattern", "tradeoff", "trade off", "compare", "pros and cons", "decision", "evaluate", "deduce", "prove", "math", "puzzle", "logic"]):
+        return "reasoning"
     if has_any_word(text, ["review", "audit", "critique", "risk", "bug", "regression", "diff", "lint", "vulnerability", "security"]):
         return "review"
     if has_any_word(text, ["summarize", "summary", "tl;dr", "explain", "overview", "explain how", "why does", "what is"]):
@@ -582,6 +596,14 @@ def classify_v4_route(request: dict[str, Any]) -> tuple[str, str]:
         return "v2", "tools-need-single-driver"
     if tokens > 60000:
         return "v2", "long-context"
+    # Hard reasoning / deduction / math -> single strong thinking model (v2 reasoning policy)
+    if has_any_word(text, [
+        "reason", "reasoning", "think step", "step by step", "analyze", "analyse",
+        "strategy", "architect", "design pattern", "tradeoff", "trade off",
+        "prove", "deduce", "math", "puzzle", "logic", "derive", "optimization",
+        "algorithm", "complexity",
+    ]):
+        return "v2", "hard-reasoning"
     if any(
         phrase in text
         for phrase in [
@@ -695,24 +717,36 @@ def race_models_for_first_success(
     api_token: str | None,
     parallel: bool = True,
 ) -> tuple[dict[str, Any], ModelCapability, str]:
-    """Storm-hardened fallback.
+    """Storm-hardened fallback that HONORS PREFERENCE ORDER.
 
     Strategy:
-      1. Build one payload per candidate model.
-      2. FIRST pass: race all candidates in parallel (or walk sequentially if
-         parallel=False). First 200 wins. Non-retryable errors mark a model dead
-         instantly; rate-limit errors mark the model dead (no same-model retry).
-      3. If the whole first pass is rate-limited, do ONE short global backoff
-         (2s) and race the surviving models again — at most once.
+      1. Try the preferred (first) candidate alone, with a tight timeout.
+         This is the happy path — the strongest model for the task wins.
+      2. If it fails (429/401/timeout), race the REMAINING candidates in parallel;
+         first 200 wins. Non-retryable errors mark a model dead instantly.
+      3. If all remaining are rate-limited, one short global backoff (2s) and one
+         retry of the whole surviving set.
       4. If still nothing, raise RuntimeError with a compact failure summary.
 
-    This keeps the happy path at one round-trip and turns a 401/429 storm from a
-    30–70s hang into ~one failed round trip (seconds), eliminating broken pipes.
+    This keeps the happy path at one round-trip (preferred model), turns a
+    401/429 storm into ~one failed round trip, and crucially picks the STRONGEST
+    model for the task rather than the fastest weak one.
     """
     if not candidates:
         raise RuntimeError("No compatible fallback models available for this request.")
 
     failures: list[str] = []
+
+    # Step 1: try the preferred (strongest) candidate first, alone.
+    preferred = candidates[0]
+    payload = anthropic_to_openai_payload(request, preferred.model)
+    cand, response, err_kind = _attempt_one_model(preferred, payload, api_base, api_token, timeout=20.0)
+    if response is not None:
+        return response, cand, ""
+    failures.append(f"{preferred.model}: {err_kind}")
+
+    # Step 2: race the remaining candidates in parallel.
+    rest = candidates[1:]
 
     def run_pass(alive: list[ModelCapability]) -> tuple[dict[str, Any], ModelCapability, list[str]] | None:
         local_failures: list[str] = []
@@ -725,8 +759,7 @@ def race_models_for_first_success(
                     cand, response, err_kind = fut.result()
                     if response is not None:
                         return response, cand, local_failures
-                    note = f"{cand.model}: {err_kind}"
-                    local_failures.append(note)
+                    local_failures.append(f"{cand.model}: {err_kind}")
         else:
             for cand, payload in payloads:
                 c, response, err_kind = _attempt_one_model(cand, payload, api_base, api_token)
@@ -735,22 +768,21 @@ def race_models_for_first_success(
                 local_failures.append(f"{cand.model}: {err_kind}")
         return None
 
-    alive = list(candidates)
-    result = run_pass(alive)
-    if result is not None:
-        response, winner, local_failures = result
-        failures.extend(local_failures)
-        return response, winner, "; ".join(failures)
-
-    # All models failed first pass. If it was rate-limits, one short global backoff
-    # and one retry of the whole set; otherwise fail immediately.
-    if all("rate_limit" in f for f in failures):
-        time.sleep(2.0)
-        result = run_pass(alive)
+    if rest:
+        result = run_pass(rest)
         if result is not None:
             response, winner, local_failures = result
             failures.extend(local_failures)
             return response, winner, "; ".join(failures)
+
+        # Step 3: all remaining rate-limited -> one short global backoff + retry.
+        if all("rate_limit" in f for f in failures):
+            time.sleep(2.0)
+            result = run_pass(rest)
+            if result is not None:
+                response, winner, local_failures = result
+                failures.extend(local_failures)
+                return response, winner, "; ".join(failures)
 
     raise RuntimeError("All compatible fallback models failed: " + " | ".join(failures))
 
@@ -791,17 +823,18 @@ def choose_v3_models(request: dict[str, Any], capabilities: list[ModelCapability
 
     policy = classify_v2_policy(request)
     advisor_names = V2_POLICIES.get(policy, []) + [
-        "qwen/qwen3-coder:free",
-        "openai/gpt-oss-120b:free",
-        "openai/gpt-oss-20b:free",
-        "llama-3.3-70b-versatile",
-        "gemini-2.5-flash",
+        "mistral-large-3-675b",
+        "command-a-reasoning",
+        "kimi-k2.6",
+        "nemotron-3-super-120b",
+        "gpt-oss-120b",
+        "llama-3.3-70b",
     ]
     aggregator_names = [
-        "openai/gpt-oss-120b:free",
-        "qwen/qwen3-coder:free",
-        "llama-3.3-70b-versatile",
-        "gemini-2.5-flash",
+        "mistral-large-3-675b",
+        "nemotron-3-super-120b",
+        "gpt-oss-120b",
+        "llama-3.3-70b",
     ]
 
     advisors: list[ModelCapability] = []
