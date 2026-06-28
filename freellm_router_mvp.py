@@ -407,6 +407,7 @@ def classify_v2_policy(request: dict[str, Any]) -> str:
     tokens = estimate_tokens(request)
     text = extract_text_from_anthropic_messages(request.get("messages", [])).lower()
     has_tools = bool(request.get("tools") or request.get("tool_choice"))
+    print(f"[DEBUG] classify_v2_policy: has_tools={has_tools} tokens={tokens} text='{text.strip()[:100]}'", file=sys.stderr)
 
     if tokens > 60000:
         return "long-context"
