@@ -42,12 +42,9 @@ def write_policies(policies: dict):
         f.write(new_content)
 
 def restart_proxies():
-    print("[Self-Healer] Restarting all proxy processes to apply optimized configuration...")
+    print("[Self-Healer] Restarting single Auto Mode (v4) proxy on port 8792...")
     subprocess.run("ps aux | grep freellm_router_mvp.py | grep -v grep | awk '{print $2}' | xargs kill -9 || true", shell=True)
-    subprocess.run("/Users/robinsverd/.local/bin/claude-routerv1 --start-proxy", shell=True)
-    subprocess.run("/Users/robinsverd/.local/bin/claude-routerv2 --start-proxy", shell=True)
-    subprocess.run("/Users/robinsverd/.local/bin/claude-routerv3 --start-proxy", shell=True)
-    subprocess.run("/Users/robinsverd/.local/bin/claude-routerv4 --start-proxy", shell=True)
+    subprocess.run("/Users/robinsverd/.local/bin/claude-router --mode v4 --start-proxy", shell=True)
 
 def run_self_healing():
     if not os.path.exists(DECISION_LOG):
