@@ -1,5 +1,5 @@
 # FreeLLM Claude Router: Reliability Experiment Report
-Generated on: 2026-06-28 09:43:45 Local Time
+Generated on: 2026-06-28 11:14:07 Local Time
 
 This benchmark compares the reliability, latency, and recovery capabilities of the four router variants (v1, v2, v3, v4) using your self-hosted FreeLLMAPI instance.
 
@@ -7,14 +7,14 @@ This benchmark compares the reliability, latency, and recovery capabilities of t
 
 | Variant | Total Requests | Successes | Success Rate | Avg Latency (s) | Fallbacks Triggered |
 | --- | --- | --- | --- | --- | --- |
-| v1 (Single Model) | 10 | 10 | 100.0% | 1.92s | 0 |
-| v2 (Task-Aware) | 10 | 10 | 100.0% | 1.65s | 2 |
-| v3 (Ensemble) | 10 | 10 | 100.0% | 4.43s | 0 |
-| v4 (Meta-Router) | 10 | 10 | 100.0% | 2.46s | 2 |
+| v1 (Single Model) | 10 | 10 | 100.0% | 8.26s | 10 |
+| v2 (Task-Aware) | 10 | 10 | 100.0% | 4.83s | 6 |
+| v3 (Ensemble) | 10 | 10 | 100.0% | 2.93s | 2 |
+| v4 (Meta-Router) | 10 | 10 | 100.0% | 6.52s | 8 |
 
 ## Reliability Evaluation
 
-> **Verdict**: **v2 (Task-Aware)** proved to be the most reliable option during this benchmark run, achieving a **100.0%** success rate.
+> **Verdict**: **v3 (Ensemble)** proved to be the most reliable option during this benchmark run, achieving a **100.0%** success rate.
 
 ### Key Insights:
 - **Version 1 (Baseline)** is fast but vulnerable to transient API provider rate limits (429s) or model failures because it makes a single static request.
@@ -27,56 +27,56 @@ This benchmark compares the reliability, latency, and recovery capabilities of t
 ### v1 (Single Model)
 | Scenario | Status | Latency | Policy / Selected Model | Fallback? | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Simple Chat | ✅ (200) | 1.59s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Coding Task | ✅ (200) | 2.24s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Comparison/Synthesis | ✅ (200) | 2.42s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Tool Use | ✅ (200) | 1.62s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Large Context | ✅ (200) | 2.17s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Simple Chat | ✅ (200) | 1.56s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Coding Task | ✅ (200) | 2.04s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Comparison/Synthesis | ✅ (200) | 2.29s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Tool Use | ✅ (200) | 1.58s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Large Context | ✅ (200) | 1.69s | `v1` → `qwen/qwen3-coder:free` | No |  |
+| Simple Chat | ✅ (200) | 7.03s | `v1` → `llama-3.3-70b-versatile` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Coding Task | ✅ (200) | 7.09s | `v1` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Comparison/Synthesis | ✅ (200) | 6.99s | `v1` → `llama-3.3-70b-versatile` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Tool Use | ✅ (200) | 7.21s | `v1` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Large Context | ✅ (200) | 14.06s | `v1` → `openai/gpt-oss-20b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}'; gemini-2.5-flash (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Simple Chat | ✅ (200) | 6.67s | `v1` → `llama-3.3-70b-versatile` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Coding Task | ✅ (200) | 6.91s | `v1` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Comparison/Synthesis | ✅ (200) | 6.88s | `v1` → `llama-3.3-70b-versatile` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Tool Use | ✅ (200) | 6.68s | `v1` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Large Context | ✅ (200) | 13.07s | `v1` → `openai/gpt-oss-20b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}'; gemini-2.5-flash (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
 
 ### v2 (Task-Aware)
 | Scenario | Status | Latency | Policy / Selected Model | Fallback? | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Simple Chat | ✅ (200) | 0.16s | `fast` → `llama-3.3-70b-versatile` | No |  |
-| Coding Task | ✅ (200) | 2.10s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Comparison/Synthesis | ✅ (200) | 0.53s | `fast` → `llama-3.3-70b-versatile` | No |  |
-| Tool Use | ✅ (200) | 1.58s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Large Context | ✅ (200) | 4.52s | `summarization` → `openai/gpt-oss-20b:free` | ⚠️ Yes | gemini-2.5-flash: POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
-| Simple Chat | ✅ (200) | 0.21s | `fast` → `llama-3.3-70b-versatile` | No |  |
-| Coding Task | ✅ (200) | 2.92s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Comparison/Synthesis | ✅ (200) | 0.71s | `fast` → `llama-3.3-70b-versatile` | No |  |
-| Tool Use | ✅ (200) | 1.74s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Large Context | ✅ (200) | 2.04s | `summarization` → `openai/gpt-oss-20b:free` | ⚠️ Yes | gemini-2.5-flash: POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Simple Chat | ✅ (200) | 0.19s | `fast` → `llama-3.3-70b-versatile` | No |  |
+| Coding Task | ✅ (200) | 7.57s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Comparison/Synthesis | ✅ (200) | 0.62s | `fast` → `llama-3.3-70b-versatile` | No |  |
+| Tool Use | ✅ (200) | 7.07s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Large Context | ✅ (200) | 7.01s | `summarization` → `openai/gpt-oss-20b:free` | ⚠️ Yes | gemini-2.5-flash (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Simple Chat | ✅ (200) | 0.18s | `fast` → `llama-3.3-70b-versatile` | No |  |
+| Coding Task | ✅ (200) | 7.18s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Comparison/Synthesis | ✅ (200) | 0.60s | `fast` → `llama-3.3-70b-versatile` | No |  |
+| Tool Use | ✅ (200) | 6.68s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Large Context | ✅ (200) | 11.15s | `summarization` → `openai/gpt-oss-20b:free` | ⚠️ Yes | gemini-2.5-flash (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
 
 ### v3 (Ensemble)
 | Scenario | Status | Latency | Policy / Selected Model | Fallback? | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Simple Chat | ✅ (200) | 2.91s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
-| Coding Task | ✅ (200) | 4.62s | `ensemble:coding` → `openai/gpt-oss-120b:free` | No |  |
-| Comparison/Synthesis | ✅ (200) | 4.98s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
-| Tool Use | ✅ (200) | 1.54s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Large Context | ✅ (200) | 6.98s | `ensemble:summarization` → `openai/gpt-oss-120b:free` | No |  |
-| Simple Chat | ✅ (200) | 6.23s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
-| Coding Task | ✅ (200) | 3.69s | `ensemble:coding` → `openai/gpt-oss-120b:free` | No |  |
-| Comparison/Synthesis | ✅ (200) | 5.85s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
-| Tool Use | ✅ (200) | 1.97s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Large Context | ✅ (200) | 5.53s | `ensemble:summarization` → `openai/gpt-oss-120b:free` | No |  |
+| Simple Chat | ✅ (200) | 1.00s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
+| Coding Task | ✅ (200) | 1.76s | `ensemble:coding` → `openai/gpt-oss-120b:free` | No |  |
+| Comparison/Synthesis | ✅ (200) | 1.89s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
+| Tool Use | ✅ (200) | 6.97s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Large Context | ✅ (200) | 3.20s | `ensemble:summarization` → `openai/gpt-oss-120b:free` | No |  |
+| Simple Chat | ✅ (200) | 1.08s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
+| Coding Task | ✅ (200) | 1.91s | `ensemble:coding` → `openai/gpt-oss-120b:free` | No |  |
+| Comparison/Synthesis | ✅ (200) | 1.76s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
+| Tool Use | ✅ (200) | 7.85s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models rate-limited. Last error: OpenRouter API error 429: Provider returned error","type":"rate_limit_error"}}' |
+| Large Context | ✅ (200) | 1.88s | `ensemble:summarization` → `openai/gpt-oss-120b:free` | No |  |
 
 ### v4 (Meta-Router)
 | Scenario | Status | Latency | Policy / Selected Model | Fallback? | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Simple Chat | ✅ (200) | 1.46s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Coding Task | ✅ (200) | 2.09s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Comparison/Synthesis | ✅ (200) | 2.14s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
-| Tool Use | ✅ (200) | 1.49s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Large Context | ✅ (200) | 2.36s | `summarization` → `openai/gpt-oss-20b:free` | ⚠️ Yes | gemini-2.5-flash: POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
-| Simple Chat | ✅ (200) | 1.64s | `v1` → `qwen/qwen3-coder:free` | No |  |
-| Coding Task | ✅ (200) | 2.34s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Comparison/Synthesis | ✅ (200) | 5.03s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
-| Tool Use | ✅ (200) | 1.60s | `coding` → `qwen/qwen3-coder:free` | No |  |
-| Large Context | ✅ (200) | 4.44s | `summarization` → `openai/gpt-oss-20b:free` | ⚠️ Yes | gemini-2.5-flash: POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Simple Chat | ✅ (200) | 6.52s | `v1` → `llama-3.3-70b-versatile` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Coding Task | ✅ (200) | 6.93s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Comparison/Synthesis | ✅ (200) | 8.27s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
+| Tool Use | ✅ (200) | 6.70s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Large Context | ✅ (200) | 6.70s | `summarization` → `openai/gpt-oss-20b:free` | ⚠️ Yes | gemini-2.5-flash (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Simple Chat | ✅ (200) | 6.69s | `v1` → `llama-3.3-70b-versatile` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Coding Task | ✅ (200) | 6.99s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Comparison/Synthesis | ✅ (200) | 2.21s | `ensemble:fast` → `openai/gpt-oss-120b:free` | No |  |
+| Tool Use | ✅ (200) | 6.96s | `coding` → `openai/gpt-oss-120b:free` | ⚠️ Yes | qwen/qwen3-coder:free (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
+| Large Context | ✅ (200) | 7.25s | `summarization` → `openai/gpt-oss-20b:free` | ⚠️ Yes | gemini-2.5-flash (attempt 3): POST http://127.0.0.1:3004/v1/chat/completions failed with HTTP 429: b'{"error":{"message":"All models exhausted. Add more API keys or wait for rate limits to reset.","type":"routing_error"}}' |
 

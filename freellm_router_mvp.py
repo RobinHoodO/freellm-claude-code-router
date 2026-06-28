@@ -62,10 +62,10 @@ V2_POLICIES = {
         "openai/gpt-oss-120b:free",
     ],
     "coding": [
-        "qwen/qwen3-coder:free",
         "openai/gpt-oss-120b:free",
         "llama-3.3-70b-versatile",
         "openai/gpt-oss-20b:free",
+        "qwen/qwen3-coder:free",
     ],
     "review": [
         "openai/gpt-oss-120b:free",
@@ -73,9 +73,9 @@ V2_POLICIES = {
         "llama-3.3-70b-versatile",
     ],
     "summarization": [
-        "gemini-2.5-flash",
         "openai/gpt-oss-20b:free",
         "llama-3.3-70b-versatile",
+        "gemini-2.5-flash",
     ],
     "fast": [
         "llama-3.3-70b-versatile",
