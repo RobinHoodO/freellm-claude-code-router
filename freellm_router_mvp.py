@@ -303,6 +303,33 @@ def prune_unused_tools(tools: list[dict[str, Any]], request_text: str) -> list[d
     return pruned_tools
 
 
+def truncate_text(text: str, max_len: int = 150) -> str:
+    if not isinstance(text, str):
+        return text
+    text = text.strip()
+    if not text:
+        return text
+    parts = text.split("\n")
+    first_line = parts[0].strip()
+    if len(first_line) > max_len:
+        return first_line[:max_len] + "..."
+    return first_line
+
+
+def clean_and_truncate_schema(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        new_schema = {}
+        for k, v in schema.items():
+            if k == "description" and isinstance(v, str):
+                new_schema[k] = truncate_text(v)
+            else:
+                new_schema[k] = clean_and_truncate_schema(v)
+        return new_schema
+    elif isinstance(schema, list):
+        return [clean_and_truncate_schema(item) for item in schema]
+    return schema
+
+
 def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str, Any]:
     openai_messages: list[dict[str, str]] = []
     system = request.get("system")
@@ -323,7 +350,6 @@ def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str
     }
     tools = request.get("tools")
     if tools:
-        # Collect all user text to check for keywords
         user_texts = []
         for msg in request.get("messages", []):
             if msg.get("role") == "user":
@@ -342,8 +368,8 @@ def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str
                 "type": "function",
                 "function": {
                     "name": tool.get("name", "tool"),
-                    "description": tool.get("description", ""),
-                    "parameters": sanitize_tool_parameters(tool.get("input_schema", {"type": "object", "properties": {}})),
+                    "description": truncate_text(tool.get("description", "")),
+                    "parameters": clean_and_truncate_schema(sanitize_tool_parameters(tool.get("input_schema", {"type": "object", "properties": {}}))),
                 },
             }
             for tool in pruned_tools_list
