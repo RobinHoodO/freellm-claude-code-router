@@ -250,6 +250,57 @@ def sanitize_tool_parameters(schema: Any) -> Any:
     return schema
 
 
+def prune_unused_tools(tools: list[dict[str, Any]], request_text: str) -> list[dict[str, Any]]:
+    # Core tools that should NEVER be pruned
+    core_prefixes = {"Bash", "Edit", "Read", "SendMessage", "Skill", "Cron", "StructuredOutput", "Notebook", "ExitWorktree", "EnterWorktree", "Task"}
+    
+    pruned_tools = []
+    text_lower = request_text.lower()
+    
+    for tool in tools:
+        name = tool.get("name", "")
+        # If it's a core tool, keep it
+        if any(name.startswith(p) for p in core_prefixes):
+            pruned_tools.append(tool)
+            continue
+            
+        # Specific filters
+        if "mcp__cal__" in name:
+            if any(kw in text_lower for kw in ["cal.com", "calendar", "schedule", "meeting", "event", "booking"]):
+                pruned_tools.append(tool)
+            continue
+            
+        if "mcp__stripe__" in name:
+            if any(kw in text_lower for kw in ["stripe", "payment", "refund", "invoice", "billing"]):
+                pruned_tools.append(tool)
+            continue
+            
+        if "mcp__supabase__" in name:
+            if any(kw in text_lower for kw in ["supabase", "database", "migration", "sql", "table"]):
+                pruned_tools.append(tool)
+            continue
+            
+        if "mcp__apify__" in name:
+            if any(kw in text_lower for kw in ["apify", "actor", "scrape"]):
+                pruned_tools.append(tool)
+            continue
+            
+        # General size filter for non-core tools: if serialized size is > 15,000 characters
+        # and none of its name parts are in the prompt, we prune it.
+        tool_len = len(json.dumps(tool))
+        if tool_len > 15000:
+            keywords = [part for part in name.lower().split("__") if part]
+            if any(kw in text_lower for kw in keywords):
+                pruned_tools.append(tool)
+            else:
+                print(f"[DEBUG] Pruned massive tool {name} (size: {tool_len} chars)", file=sys.stderr)
+            continue
+            
+        pruned_tools.append(tool)
+        
+    return pruned_tools
+
+
 def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str, Any]:
     openai_messages: list[dict[str, str]] = []
     system = request.get("system")
@@ -270,6 +321,20 @@ def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str
     }
     tools = request.get("tools")
     if tools:
+        # Collect all user text to check for keywords
+        user_texts = []
+        for msg in request.get("messages", []):
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, str):
+                    user_texts.append(content)
+                elif isinstance(content, list):
+                    for chunk in content:
+                        if isinstance(chunk, dict) and chunk.get("type") == "text":
+                            user_texts.append(chunk.get("text", ""))
+        request_text = " ".join(user_texts)
+        pruned_tools_list = prune_unused_tools(tools, request_text)
+
         payload["tools"] = [
             {
                 "type": "function",
@@ -279,11 +344,15 @@ def anthropic_to_openai_payload(request: dict[str, Any], model: str) -> dict[str
                     "parameters": sanitize_tool_parameters(tool.get("input_schema", {"type": "object", "properties": {}})),
                 },
             }
-            for tool in tools
+            for tool in pruned_tools_list
         ]
+        with open("/tmp/last_tools_payload.json", "w") as f:
+            json.dump(payload["tools"], f, indent=2)
         tools_str = json.dumps(payload["tools"])
         print(f"[DEBUG] tools_payload_size: {len(tools_str)} chars. First 500: {tools_str[:500]}", file=sys.stderr)
     return payload
+
+
 
 
 
