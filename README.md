@@ -1,12 +1,33 @@
 # FreeLLM Claude Code Router
 
-A local gateway that lets **Claude Code** drive free / cheap alternate models through a **FreeLLMAPI** backend, with a multi-version routing engine, a live dashboard, storm-hardened fallback, and a self-improving skill optimizer.
+A local gateway that lets **Claude Code** drive free / cheap alternate models through a **FreeLLMAPI** backend, with a multi-version routing engine, a live dashboard, storm-hardened fallback, a self-improving skill optimizer, and a speed-first voice agent router.
 
 > Runs Claude Code against your own FreeLLMAPI stack instead of the Anthropic API — translating Anthropic-format requests to OpenAI-compatible ones and picking the best model/strategy per request.
+
+> [!NOTE]
+> **Prerequisite Backend**: This tool is an adapter/router proxy layer. To use it, you also need a running instance of **[FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi)** (or a compatible setup) as your backend.
 
 ```bash
 claude-routerv4   # auto meta-router: picks v1, v2, or v3 per request
 ```
+
+---
+
+## Table of Contents
+
+1. [Credits](#credits)
+2. [What It Does](#what-it-does)
+3. [The Full Stack](#the-full-stack)
+4. [Quick Start](#quick-start)
+5. [Router Versions & Strategies](#router-versions--strategies)
+6. [Operator Handover & Recent Resolutions](#operator-handover--recent-resolutions)
+7. [Voice Agent Router & Switch-Over Guide](#voice-agent-router--switch-over-guide)
+8. [FreeLLMAPI Model Routing Map](#freellmapi-model-routing-map)
+9. [Claude Code Startup Token Cost & Savings Analysis](#claude-code-startup-token-cost--savings-analysis)
+10. [Reliability Experiment Report](#reliability-experiment-report)
+11. [Troubleshooting & Gotchas](#troubleshooting--gotchas)
+12. [Design Notes & Next Steps](#design-notes--next-steps)
+13. [License](#license)
 
 ---
 
@@ -21,7 +42,7 @@ All code in this repo is original to the FreeLLM Claude Code Router project unle
 
 ---
 
-## What it does
+## What It Does
 
 Claude Code expects Anthropic-style endpoints:
 
@@ -71,7 +92,10 @@ An OpenAI-compatible API gateway you run on a server. It aggregates free/cheap m
 - **Secret:** a unified API key stored in the server's SQLite DB — fetched over SSH by the launcher (see `.env.example`)
 - **Dashboard:** `http://127.0.0.1:3004`
 
-You provide your own FreeLLMAPI instance. See `HANDOVER.md` for how the SSH tunnel + key fetch works.
+You provide your own FreeLLMAPI instance.
+
+> [!IMPORTANT]
+> **FreeLLMAPI Backend Required**: This repository contains only the proxy/router adapter layer. You must set up and run a **[FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi)** instance (either self-hosted or managed) to act as the backend for this proxy.
 
 ### Layer 2 — FreeLLM Claude Code Router (this repo)
 
@@ -93,7 +117,7 @@ claude
 
 ### Layer 4 — Autoresearch optimizer (optional, bundled)
 
-A self-improving loop that stress-tests the router under real load, measures success rate + latency, and feeds findings back. Applies the [Karpathy autoresearch](https://github.com/karpathy/autoresearch) pattern to the router.
+A self-improving loop that stress-tests the router under real load, measures success rate + latency, and feeds findings back. Applies the Karpathy autoresearch pattern to the router.
 
 - **Code:** `autoresearch.py`, `experiment_harness.py`, `auto_optimizer.py`, `self_healing_daemon.py`
 - **Runs:** `python3 autoresearch.py --skill hybrid-rag --cycles 10`
@@ -105,7 +129,7 @@ A self-improving loop that stress-tests the router under real load, measures suc
 ### Prerequisites
 
 - Python 3.10+ (stdlib only — no pip dependencies)
-- A running FreeLLMAPI instance reachable over HTTP
+- A running **[FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi)** instance reachable over HTTP (required backend)
 - Claude Code CLI installed (`claude`)
 - The unified FreeLLMAPI key (in `.env`)
 
@@ -156,229 +180,358 @@ claude-routerv4
 
 ---
 
-## Router Versions
+## Router Versions & Strategies
 
 Four experimental strategies, all selectable via one command:
 
-| Command | Version | Strategy |
-|---------|---------|----------|
-| `claude-routerv1` | v1 | One selected compatible model |
-| `claude-routerv2` | v2 | Task-aware policy router with ordered fallback across allowlisted models |
-| `claude-routerv3` | v3 | Multi-advisor ensemble for text-only; falls back to v2 single-model when tools present |
-| `claude-routerv4` | v4 | **Meta-router** — auto-selects v1/v2/v3 per request (recommended) |
+| Command | Version | Strategy | Port | Default / Policy |
+|---------|---------|----------|------|-----------------|
+| `claude-routerv1` | v1 | Baseline: One selected compatible model | `8787` | `qwen/qwen3-coder:free` |
+| `claude-routerv2` | v2 | Task-aware policy router with ordered fallback | `8791` | Configurable policies |
+| `claude-routerv3` | v3 | Multi-advisor ensemble; falls back to v2 if tools present | `8789` | Text-only parallel advisors |
+| `claude-routerv4` | v4 | **Meta-router** — auto-selects v1/v2/v3 per request | `8792` | Dynamic routing rules |
 
-### v4 auto-routing rules
+### Detailed Version Architectures
 
-The meta-router inspects the request and picks the strategy:
+#### Version 1: Single Selected Model Router (Baseline)
+- **Shape:** Translates Claude Messages API requests to FreeLLMAPI chat completions and maps them directly to a selected allowlisted model.
+- **Model Mapping:** Claude Code sees `qwen/qwen3-coder:free` (visible model name), but the backend handles provider-level fallback underneath.
+- **Limitation:** Vulnerable to transient API provider rate limits (429s) or model failures because it makes a single static request attempt.
 
-```
-tools present             -> v2  (single driver model needed for tool calls)
-very long context         -> v2
-coding/fixing/debugging/  -> v2
-  testing/review
-compare/tradeoff/         -> v3  (ensemble benefits from multiple perspectives)
-  brainstorm/synthesize/
-  strategy/architecture
-short simple request      -> v1
-summary/overview         -> v2
-fallback                 -> v2
-```
+#### Version 2: Task-Aware Single-Model Router
+- **Shape:** Classifies each request into a deterministic policy and selects the best model for the job.
+- **Fallback Capability:** If the preferred model fails/rate-limits, the proxy retries alternate compatible models within the policy pool before returning an error.
+- **Core Policies:**
+  - `coding`: `qwen/qwen3-coder:free` → `openai/gpt-oss-120b:free` → `llama-3.3-70b-versatile`
+  - `fast`: `openai/gpt-oss-20b:free` → `llama-3.3-70b-versatile`
+  - `long-context`: `qwen/qwen3-coder:free` → `gemini-2.5-flash`
+  - `review`: `openai/gpt-oss-120b:free` → `z-ai/glm-4.5-air:free`
 
-Debug headers on every response:
+#### Version 3: Multi-Model Ensemble Router
+- **Shape:** Acts as an orchestrator for text-only queries. It queries multiple advisor models in parallel, aggregates their responses, and uses a synthesising step to produce a single final answer.
+- **Safety Rule:** Claude Code tool-bearing requests are automatically diverted to the safe v2 single-model path. Only one model is allowed to drive tool execution.
+- **Fit Criteria:**
+  - *Good fit:* Planning, architecture design, debugging hypotheses, code review, large-context summarization.
+  - *Bad fit:* Interactive shell loops, small edits, tool calls, streaming UX.
+- **Robustness:** If an advisor fails, the engine continues with the remaining advisors. If all fail, it falls back to a single model.
 
-```
-x-router-mode
-x-router-selected-version
-x-router-selected-model
-x-router-policy
-x-router-route-reason
-x-router-advisor-models
-x-router-fallbacks
-```
-
-### v2 policies
-
-v2 classifies requests into a deterministic policy and picks one model, falling back across compatible models on failure:
-
-```
-long-context
-coding
-review
-summarization
-fast
-```
+#### Version 4: Meta-Router
+- **Shape:** Inspects the incoming request context, checks context length, detects keywords/tool schemas, and selects the ideal router strategy (`v1`, `v2`, or `v3`) dynamically.
+- **v4 Routing Rules:**
+  ```text
+  tools present                                -> v2 (Single driver model needed)
+  very long context                            -> v2
+  coding, fixing, debugging, testing, review   -> v2
+  compare, tradeoff, brainstorm, synthesize,
+  strategy, architecture                       -> v3 (Ensemble benefits)
+  short simple request                         -> v1
+  summary or overview                          -> v2
+  fallback                                     -> v2
+  ```
 
 ---
 
-## Storm-Hardened Fallback
+## Operator Handover & Recent Resolutions
 
-The fallback engine is what keeps success rate high under upstream rate-limit storms. Three design choices:
+### 🚀 Recent Resolutions (June 28, 11:45 AM)
 
-1. **Parallel first-attempt race** — all eligible models are raced in parallel; the first 200 wins. Happy-path latency ≈ one round trip, not N × timeout.
-2. **Fail-fast on non-retryable errors** — HTTP 401/400/403/404 (auth, catalog, invalid request) mark a model dead instantly. No same-model retry.
-3. **No same-model retry on 429** — free-tier rate limits are model-wide; retrying the same model seconds later still fails. The router moves to the next model, with at most one short global backoff if every model is rate-limited.
+We recently resolved three critical issues that were causing the router to fail during testing:
 
-This turns a rate-limit storm from a 30–70s hang (the old 3×-per-model `time.sleep` loop) into ~one failed round trip, eliminating client-side broken pipes.
+#### 1. Tool Bloat & Context Length Limit Exceeded
+* **Issue**: Prompt + tools payload exceeded context length limits (estimating up to 178k input tokens).
+* **Cause**: Claude Code injects rules and workspace skills under a `<system-reminder>` header in a `"role": "user"` block. The proxy's tool-pruner matched integration keywords within this block, attaching Cal, Stripe, Supabase, Apify, Beeper, Blotato, and Twenty MCP tools to every request.
+* **Resolution**: Updated `freellm_router_mvp.py` to filter out `<system-reminder>` blocks before evaluating tools.
+* **Result**: Tools payload shrank by **91.5%** (from 324k to 27k characters), fitting easily.
 
-See `experiment_harness.py` to reproduce the stress test:
+#### 2. Stale SSH Tunnel (502 Bad Gateway)
+* **Issue**: Requests timed out or returned HTTP 502.
+* **Cause**: A stale background SSH tunnel process was holding local port `3004`, failing to forward traffic to remote port `3001` (FreeLLMAPI).
+* **Resolution**: Terminated the stale SSH process. A healthy tunnel was automatically re-established.
 
+#### 3. Invalid API Key / 401 Unauthorized
+* **Issue**: Upstream FreeLLMAPI returned `HTTP 401: Invalid API key`.
+* **Cause**: The local proxy was not configured with the unified key and forwarded the client's `local-dev-token` to the remote server.
+* **Resolution**: Retrieved the real unified API key from the remote SQLite database and updated the proxy request handler in `freellm_router_mvp.py` to extract bearer tokens safely. Restarted the local proxy with `--api-token` (read from `.env` — see `.env.example`).
+
+---
+
+## Voice Agent Router & Switch-Over Guide
+
+Point the **Thrivbe Voice Agent (Rachel)** at the speed-first voice router instead of calling FreeLLMAPI directly.
+
+```
+Before: server.py  →  http://localhost:3004/v1/chat/completions (FreeLLMAPI)
+After:  server.py  →  http://localhost:8793/v1/chat/completions (Voice Router, Port 8793)
+                          →  http://localhost:3004/v1          (FreeLLMAPI)
+```
+
+The voice router uses standard OpenAI format (no Anthropic translation needed), requiring **only one line changed** in `server.py`.
+
+### Why a separate router for the voice agent?
+The Claude Code router (`freellm_router_mvp.py`, port 8792) is optimized for **intelligence** (chooses large, complex models taking 2–9s). The voice agent requires **conversational latency (<3s first-byte)**. The voice router (`voice_router_mvp.py`, port 8793) prioritizes **speed**:
+
+| Request shape | Policy | Model picked (in order) |
+|---|---|---|
+| Tools present (most voice reqs) | `tools` | `llama-3.3-70b` → `gpt-oss-20b` → `gpt-4.1` → `mistral-large-3-675b` |
+| Plain short chat | `fast` | `gpt-oss-20b` → `llama-3.3-70b` → `gpt-4.1` |
+| Explicit reasoning/compare | `reasoning` | `mistral-large-3-675b` → `gpt-4.1` → `llama-3.3-70b` |
+| Long context (>60k tokens) | `long-context` | `nemotron-3-super-120b` (1M ctx) |
+| Summarization | `summarization` | `gpt-4.1` → `mistral-large-3-675b` |
+
+### Deployment on the Hetzner server
+
+The voice agent and FreeLLMAPI both run on `thrivbe-1` (Hetzner).
+
+#### 1. Copy files to the server
 ```bash
-python3 experiment_harness.py --requests 50
+scp voice_router_mvp.py models.allowlist.real.json hetzner:/opt/voice-bridge/
 ```
 
----
+#### 2. Create the systemd service
+Create `/etc/systemd/system/voice-router.service` on the server:
+```ini
+[Unit]
+Description=Thrivbe Voice Router (speed-first)
+After=network.target
 
-## Live Dashboard
+[Service]
+Type=simple
+WorkingDirectory=/opt/voice-bridge
+EnvironmentFile=/opt/voice-bridge/.env
+ExecStart=/usr/bin/python3 /opt/voice-bridge/voice_router_mvp.py proxy \
+  --api-base http://localhost:3004/v1 \
+  --allowlist /opt/voice-bridge/models.allowlist.real.json \
+  --port 8793 \
+  --api-token ${FREE_LLM_API_TOKEN}
+Restart=always
+RestartSec=3
 
-```
-http://127.0.0.1:8792/dashboard
-```
-
-Shows live status, current mode, and the last 50 routing decisions with latency bars and error breakdown. The headline success-rate + avg-latency metrics are computed over the last 50 decisions.
-
-JSON API:
-
-```
-GET /api/decisions   → {"decisions": [...last 50]}
-GET /api/config      → {"mode": "v4"}
-POST /api/config/update  {"mode": "v2"}
-GET /health          → {"ok": true}
-```
-
----
-
-## Files
-
-```
-freellm_router_mvp.py          Main proxy: Anthropic↔OpenAI translation, routing, fallback, dashboard
-experiment_harness.py          Stress-test harness (drives mixed traffic, reports success/latency)
-auto_optimizer.py              Automated scenario optimizer
-self_healing_daemon.py         Watches router_decisions.jsonl, self-corrects policies
-autoresearch.py                Karpathy-pattern self-improving loop (in skills/research/autoresearch/)
-run_integration_tests.py       Integration test suite
-run_reliability_experiment.py  Reliability experiment runner
-probe_real_freellmapi.sh       Regenerate the real allowlist
-run_real_proxy.sh              Manual proxy runner
-
-models.allowlist.example.json  Example allowlist (committed)
-models.allowlist.real.json     Real probed allowlist (gitignored)
-router_decisions.jsonl         Real request log (gitignored)
-
-README.md                      This file
-HANDOVER.md                    Operator handover (secrets scrubbed)
-VERSION-1.md … VERSION-4.md    Per-version design notes
-STARTUP-COST-ANALYSIS.md       Token-cost analysis of Claude Code startup
-start-here.html                Clickable local map
+[Install]
+WantedBy=multi-user.target
 ```
 
-### Secrets
-
-All secrets live in `.env` (gitignored). See `.env.example` for the full list:
-
-- `FREE_LLM_API_TOKEN` — your FreeLLMAPI unified key
-- `FREE_LLM_API_BASE` — upstream base URL
-- `CLAUDE_ROUTER_PORT`, `CLAUDE_ROUTER_MODE`
-
-The launcher fetches the key over SSH if `.env` is empty:
-
+#### 3. Enable, start, and check status
 ```bash
-ssh -o ClearAllForwardings=yes freellmapi-tunnel \
-  "sqlite3 /opt/freellmapi/data/freeapi.db \"select value from settings where key='unified_api_key';\""
+ssh hetzner 'sudo systemctl daemon-reload && sudo systemctl enable --now voice-router'
+ssh hetzner 'curl -s http://localhost:8793/health'
+# Expected: {"ok": true, "router": "voice", "mode": "speed-first"}
 ```
 
----
-
-## Current Allowlisted Models
-
-Probed against a live FreeLLMAPI instance. "Compatible" means: basic chat works, tool-call shape works, and context window is large enough for Claude Code startup/tool prompts.
-
-| Model | Tools | Context | Roles |
-|-------|:-----:|--------:|-------|
-| `gpt-oss-120b` | ✅ | 131072 | coding, tool_use, summarization |
-| `gpt-oss-20b` | ✅ | 131072 | coding, tool_use, summarization |
-| `llama-3.3-70b` | ✅ | 131072 | coding, tool_use, summarization |
-| `gpt-4.1` | ✅ | 128000 | coding, tool_use, summarization |
-| `qwen/qwen3-coder:free` | ❌ | 8192 | coding, summarization |
-| `gemini-2.5-flash` | ❌ | 1048576 | summarization |
-
-FreeLLMAPI can still route/fallback underneath, so the requested model and the actual provider/model may differ.
-
----
-
-## Testing
-
+#### 4. Point server.py at the Voice Router
+Edit `API_URL` in `/opt/voice-bridge/server.py`:
+```python
+API_URL = "http://localhost:8793/v1/chat/completions"
+```
+Then restart the voice bridge:
 ```bash
-# Syntax check
-python3 -m py_compile freellm_router_mvp.py
-bash -n probe_real_freellmapi.sh run_real_proxy.sh
-
-# Smoke test each version
-for v in v1 v2 v3 v4; do
-  claude-router$v -p "Say ROUTER_${v}_TEST_OK and nothing else." --output-format text
-done
-
-# Stress test v4 (auto mode)
-python3 experiment_harness.py --requests 50
-
-# Direct v4 route proof
-curl -sS -D /tmp/h.headers http://127.0.0.1:8792/v1/messages \
-  -H 'content-type: application/json' \
-  -d '{"model":"gpt-oss-120b","max_tokens":30,"messages":[{"role":"user","content":"Compare tradeoffs."}]}' \
-  > /dev/null
-grep -i 'x-router-selected-version' /tmp/h.headers   # → v3
+ssh hetzner 'sudo systemctl restart voice-bridge'
 ```
 
 ---
 
-## Troubleshooting
+## FreeLLMAPI Model Routing Map
 
-### `No module named 'encodings'`
+Organized by task category exposed by your self-hosted **FreeLLMAPI** instance:
 
-A broken `PYTHONHOME` / `PYTHONPATH` / `PYTHONEXECUTABLE` leaking into router startup. The launcher unsets these. Override Python if needed:
+### 1. Coding & Software Development
+*Best for code generation, debugging, refactoring, test suite creation, and tool-use scripts.*
 
-```bash
-CLAUDE_ROUTER_PYTHON=/path/to/python3 claude-routerv4
-```
+| Model ID | Model Name | Context Window | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| `qwen3-coder-480b` | Qwen3 Coder 480B | 1,048,576 tokens | Premium coding model with massive multi-file context capability. |
+| `qwen3-coder-next` | Qwen3 Coder Next | 262,144 tokens | Large context general coder. |
+| `codestral` | Codestral | 256,000 tokens | Specialized, fast code generation model. |
+| `poolside-laguna-m.1` | Poolside Laguna M.1 | 262,144 tokens | Specialized software engineering agent model. |
+| `poolside-laguna-xs.2` | Poolside Laguna XS.2 | 131,072 tokens | Lightweight software engineering model. |
+| `deepseek-r1-distill-qwen-32b`| DeepSeek R1 Distill Qwen 32B | 131,072 tokens | Reason-before-acting distill model, great for logic bugs. |
 
-### `Address already in use`
+### 2. Reasoning, Strategy & Synthesis (Ensemble Advisors)
+*Best for structural choices, design patterns, tradeoff comparisons, and v3 ensemble critiques.*
 
-Another process holds the port. v2 uses 8791 and v4 uses 8792 because 8788/8790 were taken by node processes. Check listeners:
+| Model ID | Model Name | Context Window | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| `deepseek-v4-pro` | DeepSeek V4 Pro | 131,072 tokens | High-reasoning reasoning model. |
+| `mistral-large-3-675b` | Mistral Large 3 675B | 131,072 tokens | Robust agent for general complex reasoning and aggregations. |
+| `hermes-3-405b` | Hermes 3 405B | 131,072 tokens | Full-size open weights model for complex logic and instructions. |
+| `nemotron-3-nano-30b-reasoning`| Nemotron 3 Nano 30B Reasoning | 262,144 tokens | Specialized reasoning advisor. |
+| `command-a-reasoning` | Command A Reasoning | 256,000 tokens | Logic-first search-capable agent. |
+| `liquid-lfm-2.5-1.2b-thinking`| Liquid LFM 2.5 1.2B Thinking | 32,768 tokens | Lightweight thinking advisor. |
 
-```bash
-lsof -nP -iTCP:8792 -sTCP:LISTEN
-```
+### 3. Long Context Processing & Summarization
+*Best for reading large logs, auditing codebases, summarizing documents, and code reviews.*
 
-### `All models exhausted` (429)
+| Model ID | Model Name | Context Window | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| `nemotron-3-super-120b` | Nemotron 3 Super 120B | 1,000,000 tokens | Extreme long context processing (e.g., massive file analysis). |
+| `kimi-k2.6` | Kimi K2.6 | 262,144 tokens | Highly competent long-context assistant. |
+| `command-r-2` | Command R+ | 131,072 tokens | Premium search and long context RAG engine. |
+| `command-r` | Command R | 131,072 tokens | Standard search and long context engine. |
+| `nemotron-3-120b` | Nemotron 3 120B | 262,144 tokens | General document processing. |
 
-Upstream FreeLLMAPI rate limits hit. The storm-hardened fallback handles this by racing all models and failing fast. For sustained load you need higher-limit (paid) API keys in your FreeLLMAPI DB.
+### 4. Fast, Lightweight & Simple Tasks (Baselines)
+*Best for short prompts, instant responses, interactive shell updates, and cheap fallbacks.*
 
-### Broken pipe (`[Errno 32]`)
+| Model ID | Model Name | Context Window | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| `deepseek-v4-flash` | DeepSeek V4 Flash | 131,072 tokens | Ultra-fast interactive completions. |
+| `glm-4.7-flash` | GLM-4.7 Flash | 131,072 tokens | Lightweight speed-priority chats. |
+| `llama-3.1-8b-instant` | Llama 3.1 8B Instant | 131,072 tokens | Immediate, small helper queries. |
+| `llama-3.3-70b-fp8-fast` | Llama 3.3 70B fp8-fast | 24,000 tokens | Quantized fast 70B model. |
+| `granite-4.0-h-micro` | Granite 4.0 H Micro | 131,072 tokens | Fast micro helper. |
+| `liquid-lfm-2.5-1.2b` | Liquid LFM 2.5 1.2B | 32,768 tokens | Fast lightweight execution. |
+| `llama-3.2-3b` | Llama 3.2 3B | 131,072 tokens | Ultra-light fallback helper. |
 
-Client (Claude Code) closed the connection before the proxy finished. Caused by old same-model retry loops holding connections 30–70s. The parallel-race fallback eliminates this.
+### 5. Vision & Multimodal Tasks
+*Best for UI screenshot analysis, layouts audits, and diagram reading.*
+
+| Model ID | Model Name | Context Window | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| `glm-4.6v-flash` | GLM-4.6V Flash | 131,072 tokens | Fast multimodal inputs (images, diagrams). |
+| `nemotron-nano-12b-vl` | Nemotron Nano 12B VL | 128,000 tokens | Vision-language understanding tasks. |
 
 ---
 
-## Design Notes
+## Claude Code Startup Token Cost & Savings Analysis
 
-**Router-R1** (a learned decision model) is the planned future layer but is not yet integrated. Current routing is deterministic Python logic in `choose_model`, `classify_v2_policy`, `classify_v4_route`. The safe insertion point:
+**Workspace:** `Thrivbe-AI` (Measured via real requests in `router_decisions.jsonl` from this router's logs).
 
+### 1. TL;DR — What one prompt costs
+
+| Scenario | Input tokens per single prompt | Notes |
+|---|---|---|
+| Lean one-shot (`-p "..."`, minimal tool surface) | **~12,700 tok** | Measured P10 |
+| Typical interactive session startup | **~29,000 tok** | Measured median (P50) |
+| Full-context interactive startup (tools + skills + MCP) | **~53,800 tok** | Measured P90, most common cluster |
+| Max observed | ~68,500 tok | Heavy tool-schema + skill-list load |
+
+**Every prompt you send pays this input-token tax** because Claude Code re-sends the entire system prompt + context window on every turn. The first prompt of a session is the most expensive; subsequent prompts in the same session compound as prior turns accumulate.
+
+### 2. Measured evidence
+Captured during the FreeLLM router reliability experiment:
 ```
-request
-  -> hard compatibility filter  (eligible models only)
-    -> Router-R1 chooses model or routing strategy
+Real Claude Code requests logged:        143
+Input tokens  — min: 12,677  max: 68,541  mean: 31,169
+Output tokens — min: 0       max: 1,331   mean: 151
+
+Distribution:
+  12k tier  (lean -p startup)        19 requests
+  20–29k tier                        69 requests   ← bulk of interactive turns
+  30–44k tier                        20 requests
+  45–59k tier (full context)         34 requests   ← fresh interactive startup
+  60k+ tier                           2 requests
 ```
 
-Router-R1 should only ever see models that passed compatibility checks for the current request — never the raw FreeLLMAPI model list.
+### 3. Startup overhead breakdown (this workspace)
+
+| Component | Tokens | Source |
+|---|---|---|
+| Anthropic Claude Code base system prompt | ~11,000 | Built-in |
+| Built-in tool schemas (~25–35 tools) | ~8,000–12,000 | Injected by Claude Code |
+| `CLAUDE.md` (root project memory) | ~5,288 | `Thrivbe-AI/CLAUDE.md` (21,152 B) |
+| `AGENTS.md` root (GitNexus Thrivbe-AI block) | ~1,373 | `Thrivbe-AI/AGENTS.md` (5,495 B) |
+| `AGENTS.md` nested (GitNexus social-content-engine) | ~742 | `lab/social-content-engine/AGENTS.md` (2,968 B) |
+| `CLAUDE.md` nested (cwd) | ~1,388 | `lab/social-content-engine/CLAUDE.md` (5,552 B) |
+| Skills available-skills list (231 skills, brief headers only) | ~4,000–6,000 | Only name + one-line description loads |
+| MCP tool schemas (firefly + task-master-ai) | ~2,000 | `.mcp.json` |
+| GitNexus MCP tool schemas + usage instructions | ~3,000 | GitNexus MCP server |
+| **Estimated total** | **~36,000–42,000** | |
+
+### 4. Cost in dollars (Anthropic Sonnet 4 list pricing: $3 / 1M input)
+
+| Scenario | Input cost | Output cost (avg ~150 tok) | Total / prompt |
+|---|---|---|---|
+| Lean one-shot (12.7k in) | $0.038 | $0.002 | **~$0.04** |
+| Median interactive (29k in) | $0.087 | $0.002 | **~$0.09** |
+| Full startup (53.8k in) | $0.161 | $0.002 | **~$0.16** |
+
+**For a 10-turn interactive session** in this workspace: ~53.8k + 54k + 55k + … ≈ **~600k input tokens → ~$1.80** for the conversation.
+The FreeLLM router is the **direct answer**: it routes this ~53,800-token payload through free models (like `gpt-oss-120b`) at **$0 cost**.
 
 ---
 
-## Recommended Next Steps
+## Reliability Experiment Report
 
-1. Automated integration test script running v1–v4 checks in one command
-2. Small Python supervisor for start/stop/status (replacing bash + PID files)
-3. JSONL route logs for historical inspection (already in `router_decisions.jsonl`)
-4. Router-R1 decision layer once the deterministic router is stable
-5. Browser UI page showing live status + recent decisions (the dashboard already does this)
+### Executive Summary
+
+| Variant | Total Requests | Successes | Success Rate | Avg Latency (s) | Fallbacks Triggered |
+| --- | --- | --- | --- | --- | --- |
+| v1 (Single Model) | 10 | 10 | 100.0% | 8.26s | 10 |
+| v2 (Task-Aware) | 10 | 10 | 100.0% | 4.83s | 6 |
+| v3 (Ensemble) | 10 | 10 | 100.0% | 2.93s | 2 |
+| v4 (Meta-Router) | 10 | 10 | 100.0% | 6.52s | 8 |
+
+* **Version 3 (Ensemble)** proved to be the most reliable option during benchmark testing, achieving 100% success rate with only 2 fallback occurrences.
+* **Version 2 (Task-Aware)** dramatically improves reliability over Version 1 by retrying alternate compatible models in the policy pool when the first model fails.
+* **Version 4 (Meta-Router)** dynamically balances task requirements between speed (v1), robustness for coding/tools (v2), and multi-perspective synthesis (v3).
+
+### Detailed Scenario Runs
+
+#### v1 (Single Model)
+- **Simple Chat, Coding Task, Tool Use, comparison:** All returned HTTP 200, but all triggered fallbacks because preferred models like `qwen/qwen3-coder:free` hit 429 errors from the upstream FreeLLMAPI.
+
+#### v2 (Task-Aware)
+- **Simple Chat & Comparison:** Latency was <1s using `llama-3.3-70b-versatile` under the `fast` policy.
+- **Coding & Tool Use:** Triggered fallbacks to alternate coding pool models (e.g. `openai/gpt-oss-120b:free`) due to rate limits on first-choice models, resolving successfully.
+
+#### v3 (Ensemble)
+- **Simple Chat & Coding:** Parallel advisor calls resolved successfully without fallbacks, achieving excellent latencies (~1-2s).
+- **Tool Use:** Safely defaulted to the v2 single-model coding path.
+
+#### v4 (Meta-Router)
+- **Comparison/Synthesis:** Correctly selected `v3` ensemble.
+- **Coding / Tool Use:** Correctly selected `v2` policy.
+- **Simple Chat:** Selected `v1` path.
+
+---
+
+## Troubleshooting & Gotchas
+
+### 1. `No module named 'encodings'`
+* **Cause:** Broken `PYTHONHOME` / `PYTHONPATH` leaking from parent environment.
+* **Fix:** The wrappers (`claude-router`, `probe_real_freellmapi.sh`, `run_real_proxy.sh`) explicitly unset these env vars before executing Python. Override Python executable if needed:
+  ```bash
+  CLAUDE_ROUTER_PYTHON=/path/to/python3 claude-routerv4
+  ```
+
+### 2. Port Conflicts (`Address already in use`)
+* **Conflict Ports:** Ports `8788` and `8790` are used by local Node.js processes.
+* **Fix:**
+  * v2 runs on `8791`
+  * v4 runs on `8792`
+  * Check active listeners:
+    ```bash
+    lsof -nP -iTCP:8792 -sTCP:LISTEN
+    ```
+
+### 3. `All models exhausted` (429)
+* **Cause:** Upstream FreeLLMAPI free-tier rate limits reached.
+* **Fix:** Single-model paths automatically retry other allowlisted models. v3 ensemble skips failed advisors. For heavy usage, update FreeLLMAPI with paid API keys.
+
+### 4. Codex Tool Environment Reaping
+* **Cause:** Background processes started from within the Codex environment are sometimes reaped when tools exit.
+* **Fix:** Start proxies directly in the user's terminal:
+  ```bash
+  claude-routervN --start-proxy
+  ```
+
+---
+
+## Design Notes & Next Steps
+
+### R1 Decision Layer (Planned)
+The future **Router-R1** learned decision model will sit after the compatibility filter:
+```
+Request 
+  -> Hard Compatibility Filter (Eligible models only)
+    -> Router-R1 (Chooses specific model or strategy)
+      -> FreeLLMAPI
+```
+*Never let Router-R1 choose from the raw FreeLLMAPI list; it must only see verified compatible models for the current request.*
+
+### Next Action items
+1. Create an automated integration test script running v1-v4 direct endpoint checks in one go.
+2. Implement a Python-based supervisor for start/stop/status of router services.
+3. Streamlined JSONL logging for historical route inspection.
 
 ---
 
